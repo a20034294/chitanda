@@ -1,0 +1,99 @@
+name: chitanda
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: chitanda
+      POSTGRES_USER: chitanda
+      POSTGRES_PASSWORD: chitanda
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chitanda -d chitanda"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ..
+    command: ["node", "packages/db/dist/migrate.js"]
+    environment:
+      CHITANDA_CONFIG_FILE: config/compose.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+    environment:
+      CHITANDA_CONFIG_FILE: config/compose.yaml
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    read_only: true
+    tmpfs:
+      - /tmp
+    secrets:
+      - bootstrap-token
+      - master-key
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+    command: ["node", "apps/worker/dist/index.js"]
+    environment:
+      CHITANDA_CONFIG_FILE: config/compose.yaml
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  ollama-data:
+
+secrets:
+  bootstrap-token:
+    file: ../.secrets/bootstrap-token
+  master-key:
+    file: ../.secrets/master-key

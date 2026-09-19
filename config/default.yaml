@@ -1,0 +1,64 @@
+server:
+  host: 0.0.0.0
+  port: 3000
+  publicBaseUrl: http://localhost:3000
+  allowedHosts:
+    - localhost
+    - 127.0.0.1
+  allowedOrigins:
+    - http://localhost:3000
+    - http://127.0.0.1:3000
+    - http://localhost:5173
+    - http://127.0.0.1:5173
+  trustedProxies: []
+
+worker:
+  healthHost: 0.0.0.0
+  healthPort: 3001
+  concurrency: 4
+  pollIntervalMs: 1000
+
+database:
+  url: postgresql://chitanda:chitanda@127.0.0.1:5432/chitanda
+  poolMax: 10
+  statementTimeoutMs: 30000
+
+security:
+  secureCookies: false
+  requireAdminMfa: false
+  bootstrapTokenFile: .secrets/bootstrap-token
+  masterKeyFile: .secrets/master-key
+  sessionTtlHours: 168
+  csrfHeaderName: x-csrf-token
+  loginRateLimit:
+    attempts: 5
+    windowSeconds: 900
+  intentRateLimit:
+    attempts: 20
+    windowSeconds: 900
+
+logging:
+  level: info
+
+llm:
+  defaultProvider: ollama
+  intentParser:
+    provider: ollama
+    model: qwen3
+  ollama:
+    baseUrl: http://127.0.0.1:11434
+    model: qwen3
+  openai:
+    baseUrl: https://api.openai.com/v1
+    apiKeyFile: .secrets/openai-api-key
+    model: gpt-5.6-terra
+    store: false
+
+notifications:
+  email:
+    enabled: false
+    from: Chitanda <chitanda@localhost>
+    smtp:
+      host: localhost
+      port: 1025
+      secure: false

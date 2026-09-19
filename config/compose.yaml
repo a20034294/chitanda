@@ -1,0 +1,13 @@
+server:
+  publicBaseUrl: http://localhost:3000
+
+database:
+  url: postgresql://chitanda:chitanda@postgres:5432/chitanda
+
+llm:
+  ollama:
+    baseUrl: http://ollama:11434
+
+security:
+  bootstrapTokenFile: /run/secrets/bootstrap-token
+  masterKeyFile: /run/secrets/master-key

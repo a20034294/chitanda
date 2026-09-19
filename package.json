@@ -1,0 +1,33 @@
+{
+  "name": "chitanda",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Self-hosted LLM information monitoring platform",
+  "type": "module",
+  "packageManager": "pnpm@12.4.2",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel --stream --filter @chitanda/api --filter @chitanda/web --filter @chitanda/worker dev",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "init:secrets": "tsx scripts/init-secrets.ts",
+    "lint": "eslint .",
+    "test": "pnpm build && pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.13.5",
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.8",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.13",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^5.0.1"
+  }
+}

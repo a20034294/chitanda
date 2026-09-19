@@ -1,0 +1,24 @@
+{
+  "name": "@chitanda/api",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chitanda/config": "workspace:*",
+    "@chitanda/contracts": "workspace:*",
+    "@chitanda/db": "workspace:*",
+    "@chitanda/llm": "workspace:*",
+    "@chitanda/security": "workspace:*",
+    "@hono/node-server": "^2.1.1",
+    "hono": "^4.13.8",
+    "pino": "^10.3.1",
+    "zod": "^4.6.5"
+  }
+}

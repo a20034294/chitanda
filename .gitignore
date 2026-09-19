@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.pnpm-store/
+.eslintcache
+*.tsbuildinfo
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+.secrets/
+config/instance.yaml
+config/*.local.yaml

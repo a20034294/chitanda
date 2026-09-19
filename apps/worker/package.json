@@ -1,0 +1,20 @@
+{
+  "name": "@chitanda/worker",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chitanda/config": "workspace:*",
+    "@chitanda/contracts": "workspace:*",
+    "@chitanda/db": "workspace:*",
+    "graphile-worker": "^0.18.0",
+    "pino": "^10.3.1"
+  }
+}

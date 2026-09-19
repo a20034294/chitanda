@@ -1,0 +1,24 @@
+# Copy to config/instance.yaml and include only values that differ from default.yaml.
+server:
+  publicBaseUrl: https://chitanda.example.com
+  allowedHosts:
+    - chitanda.example.com
+  allowedOrigins:
+    - https://chitanda.example.com
+  trustedProxies:
+    - 10.0.0.0/8
+
+security:
+  secureCookies: true
+  requireAdminMfa: true
+
+notifications:
+  email:
+    enabled: true
+    from: Chitanda <chitanda@example.com>
+    smtp:
+      host: smtp.example.com
+      port: 465
+      secure: true
+      usernameFile: /run/secrets/smtp-username
+      passwordFile: /run/secrets/smtp-password
