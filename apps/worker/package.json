@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@chitanda/collection": "workspace:*",
     "@chitanda/config": "workspace:*",
+    "@chitanda/connectors": "workspace:*",
     "@chitanda/contracts": "workspace:*",
     "@chitanda/db": "workspace:*",
     "graphile-worker": "^0.18.0",

@@ -1,6 +1,6 @@
 # Chitanda 平台設計定義
 
-> 狀態：Draft v0.3<br>
+> 狀態：Draft v0.4（Phase 2 implemented）<br>
 > 日期：2026-09-19<br>
 > 目標讀者：產品維護者、開發者、來源 connector 開發者
 > 技術基線：Node.js 24 LTS、TypeScript、Hono、Preact + Vite、PostgreSQL
@@ -390,7 +390,7 @@ Provider 必須接受 idempotency key，並回報 delivered、retryable failure 
 
 重要唯一鍵：
 
-- `source_items(connector_id, external_id)`；無 external ID 時以 canonical URL/hash 策略補足。
+- `source_items(connector_id, source_key, external_id)`；`source_key` 由 connector query 正規化後產生，無 external ID 時以 canonical URL/hash 策略補足。
 - `source_item_versions(source_item_id, content_hash)`。
 - `events(task_id, source_item_id, event_type, event_fingerprint)`。
 - `deliveries(event_id, user_id, channel, schedule_bucket)`。

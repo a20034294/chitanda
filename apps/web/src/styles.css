@@ -264,14 +264,23 @@ code,
   margin-top: 1rem;
 }
 .task-card {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: center;
+  display: block;
   padding: 1.1rem 1.2rem;
   border: 1px solid rgb(32 55 46 / 12%);
   border-radius: 0.8rem;
   background: rgb(255 255 251 / 67%);
+}
+.task-card-main,
+.task-actions,
+.runs-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.task-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 .task-card h3,
 .task-card p {
@@ -298,16 +307,61 @@ code,
   color: #9a5d19 !important;
   font-size: 0.8rem;
 }
+.runs-panel {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(32 55 46 / 12%);
+}
+.run-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.55rem 0;
+  color: #5a6761;
+  font-size: 0.75rem;
+}
+.run-row + .run-row {
+  border-top: 1px solid rgb(32 55 46 / 8%);
+}
+.run-status {
+  padding: 0.15rem 0.4rem;
+  border-radius: 999px;
+  background: #e4e7e3;
+  font-weight: 800;
+}
+.run-status--succeeded {
+  color: #1f6248;
+  background: #d6eadd;
+}
+.run-status--failed,
+.run-status--dead_letter {
+  color: #8a3028;
+  background: #f0d9d5;
+}
+.run-status--running,
+.run-status--queued,
+.run-status--retrying {
+  color: #80551a;
+  background: #f3e5c9;
+}
+.run-error {
+  color: #a23d32;
+  font-weight: 700;
+}
 
 @media (max-width: 640px) {
   .form-row,
-  .task-card {
+  .task-card-main {
     align-items: stretch;
     flex-direction: column;
   }
   .form-row button,
   .task-card button {
     width: 100%;
+  }
+  .run-row {
+    grid-template-columns: auto 1fr;
   }
   .account > span {
     display: none;

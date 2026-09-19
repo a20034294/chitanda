@@ -68,5 +68,21 @@ screen after placing an API key in `.secrets/openai-api-key`; no key is needed f
 5. Confirm to persist revision 1 as a draft, then activate it explicitly. Revising a task creates a
    new immutable revision and returns it to draft status.
 
-Activation records intent only in Phase 1. Collection and scheduling begin in Phase 2, so an active
-task does not fetch external sources yet.
+Phase 1 records and activates the interpreted intent. With Phase 2, an active task containing an
+`rss` or `json_api` source is scheduled by the worker. Pure `manual` and `webhook` tasks are push
+sources and are not scheduled for outbound requests.
+
+## Phase 2 collection
+
+- RSS/Atom source query: `{ "url": "https://example.com/feed.xml" }`
+- JSON API source query supports `url`, `itemsPath`, `idField`, `urlField`, `titleField`,
+  `contentField`, `authorField`, `publishedAtField`, and `languageField`.
+- `POST /api/tasks/:id/run` queues an immediate pull run.
+- `POST /api/tasks/:id/ingest` accepts up to 100 normalized records for authenticated manual or
+  webhook ingestion.
+- `GET /api/tasks/:id/runs` returns run state, counters, and sanitized failure details.
+- `POST /api/tasks/:id/runs/:runId/retry` requeues a failed or dead-letter run as a new run.
+
+Outbound connectors allow only HTTP(S), reject embedded URL credentials and private/loopback DNS
+answers, enforce a 30-second timeout, and cap responses at 5 MiB. Task definitions must use public
+source URLs; local fixture endpoints are intentionally blocked in production.

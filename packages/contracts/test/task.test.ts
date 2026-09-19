@@ -39,6 +39,10 @@ describe("TaskDefinitionV1", () => {
     expect(() => taskDefinitionV1Schema.parse({ ...validDefinition, executeNow: true })).toThrow();
   });
 
+  it("requires at least one information source", () => {
+    expect(() => taskDefinitionV1Schema.parse({ ...validDefinition, sources: [] })).toThrow();
+  });
+
   it("requires clarification questions to be explicit", () => {
     expect(
       interpretedTaskSchema.parse({

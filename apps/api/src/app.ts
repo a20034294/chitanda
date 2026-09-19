@@ -18,6 +18,7 @@ type AppDependencies = {
   readinessCheck: () => Promise<void>;
   database?: Database;
   providers?: Map<string, LlmProvider>;
+  queueCollectionRun?: (input: { runId: string; taskId: string }) => Promise<void>;
   staticRoot?: string;
 };
 
@@ -37,6 +38,7 @@ export function createApp({
   readinessCheck,
   database,
   providers,
+  queueCollectionRun,
   staticRoot
 }: AppDependencies): Hono<{
   Variables: AppVariables;
@@ -118,8 +120,8 @@ export function createApp({
     })
   );
 
-  if (database && providers) {
-    const apiDependencies = { config, database, providers };
+  if (database && providers && queueCollectionRun) {
+    const apiDependencies = { config, database, providers, queueCollectionRun };
     registerAuthRoutes(app, apiDependencies);
     registerTaskRoutes(app, apiDependencies);
   }

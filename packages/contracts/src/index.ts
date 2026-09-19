@@ -59,6 +59,7 @@ export const taskDefinitionV1Schema = z
           })
           .strict()
       )
+      .min(1)
       .max(20),
     filters: z
       .object({
@@ -153,3 +154,37 @@ export const createTaskRequestSchema = z
     preview: taskPreviewSchema
   })
   .strict();
+
+export const normalizedSourceRecordSchema = z
+  .object({
+    externalId: z.string().min(1).max(2000).nullable(),
+    canonicalUrl: z.string().url().max(8000).nullable(),
+    title: z.string().min(1).max(2000),
+    content: z.string().max(500_000),
+    author: z.string().max(1000).nullable(),
+    publishedAt: z.string().datetime().nullable(),
+    language: z.string().max(50).nullable(),
+    media: z
+      .array(z.object({ url: z.string().url(), type: z.string().nullable() }).strict())
+      .max(100),
+    metadata: z.record(z.string(), z.unknown()),
+    rawPayload: z.unknown()
+  })
+  .strict();
+
+export type NormalizedSourceRecord = z.infer<typeof normalizedSourceRecordSchema>;
+
+export const manualIngestRequestSchema = z
+  .object({
+    records: z.array(normalizedSourceRecordSchema).min(1).max(100)
+  })
+  .strict();
+
+export const collectionRunStatusSchema = z.enum([
+  "queued",
+  "running",
+  "retrying",
+  "succeeded",
+  "failed",
+  "dead_letter"
+]);

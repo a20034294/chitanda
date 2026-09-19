@@ -99,6 +99,119 @@ export const taskRevisions = pgTable(
   ]
 );
 
+export const collectionRuns = pgTable(
+  "collection_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    trigger: text("trigger").notNull(),
+    status: text("status").notNull().default("queued"),
+    dedupeKey: text("dedupe_key").notNull().unique(),
+    attempt: integer("attempt").notNull().default(0),
+    fetchedCount: integer("fetched_count").notNull().default(0),
+    newCount: integer("new_count").notNull().default(0),
+    updatedCount: integer("updated_count").notNull().default(0),
+    unchangedCount: integer("unchanged_count").notNull().default(0),
+    rejectedCount: integer("rejected_count").notNull().default(0),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("collection_runs_task_id_idx").on(table.taskId),
+    index("collection_runs_status_idx").on(table.status),
+    index("collection_runs_created_at_idx").on(table.createdAt)
+  ]
+);
+
+export const sourceItems = pgTable(
+  "source_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    connectorId: text("connector_id").notNull(),
+    sourceKey: text("source_key").notNull(),
+    externalId: text("external_id").notNull(),
+    canonicalUrl: text("canonical_url"),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    author: text("author"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    language: text("language"),
+    currentVersion: integer("current_version").notNull().default(1),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({})
+  },
+  (table) => [
+    uniqueIndex("source_items_identity_idx").on(
+      table.connectorId,
+      table.sourceKey,
+      table.externalId
+    ),
+    index("source_items_canonical_url_idx").on(table.canonicalUrl),
+    index("source_items_last_seen_at_idx").on(table.lastSeenAt)
+  ]
+);
+
+export const sourceItemVersions = pgTable(
+  "source_item_versions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sourceItemId: uuid("source_item_id")
+      .notNull()
+      .references(() => sourceItems.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    contentHash: text("content_hash").notNull(),
+    normalized: jsonb("normalized").$type<Record<string, unknown>>().notNull(),
+    rawPayload: jsonb("raw_payload").notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("source_item_versions_hash_idx").on(table.sourceItemId, table.contentHash),
+    uniqueIndex("source_item_versions_number_idx").on(table.sourceItemId, table.version)
+  ]
+);
+
+export const taskRunItems = pgTable(
+  "task_run_items",
+  {
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => collectionRuns.id, { onDelete: "cascade" }),
+    sourceItemId: uuid("source_item_id")
+      .notNull()
+      .references(() => sourceItems.id, { onDelete: "cascade" }),
+    outcome: text("outcome").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    primaryKey({ columns: [table.runId, table.sourceItemId] }),
+    index("task_run_items_source_item_id_idx").on(table.sourceItemId)
+  ]
+);
+
+export const connectorCursors = pgTable(
+  "connector_cursors",
+  {
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    sourceIndex: integer("source_index").notNull(),
+    connectorId: text("connector_id").notNull(),
+    cursor: jsonb("cursor").$type<Record<string, unknown>>().notNull().default({}),
+    etag: text("etag"),
+    lastModified: text("last_modified"),
+    lastSucceededAt: timestamp("last_succeeded_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [primaryKey({ columns: [table.taskId, table.sourceIndex] })]
+);
+
 export const auditLogs = pgTable(
   "audit_logs",
   {

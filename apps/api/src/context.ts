@@ -22,6 +22,7 @@ export type ApiDependencies = {
   config: AppConfig;
   database: Database;
   providers: Map<string, LlmProvider>;
+  queueCollectionRun: (input: { runId: string; taskId: string }) => Promise<void>;
 };
 
 export class ApiError extends Error {

@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
 import type { Hono } from "hono";
 import { z } from "zod";
 import {
   createTaskRequestSchema,
   interpretTaskRequestSchema,
+  manualIngestRequestSchema,
   taskDefinitionV1Schema,
   type TaskPreview
 } from "@chitanda/contracts";
+import { completeIngestRun, ingestRecords, markRunFailure } from "@chitanda/collection";
 import { INTENT_PROMPT_VERSION, interpretTask } from "@chitanda/llm";
 import { consumeRateLimit, requireAuth } from "./auth.js";
 import { ApiError, type ApiDependencies, type AppVariables } from "./context.js";
@@ -25,6 +28,17 @@ export function registerTaskRoutes(
   const taskAuthentication = requireAuth(dependencies, { requireMfa: true, csrf: true });
   app.use("/api/tasks/*", taskAuthentication);
   app.use("/api/tasks", taskAuthentication);
+
+  app.get("/api/connectors", requireAuth(dependencies, { requireMfa: true }), (context) =>
+    context.json({
+      connectors: [
+        { id: "rss", name: "RSS / Atom", mode: "pull" },
+        { id: "json_api", name: "Generic JSON API", mode: "pull" },
+        { id: "manual", name: "Manual ingest", mode: "push" },
+        { id: "webhook", name: "Authenticated webhook ingest", mode: "push" }
+      ]
+    })
+  );
 
   app.post("/api/tasks/interpret", async (context) => {
     let raw: unknown;
@@ -234,5 +248,154 @@ export function registerTaskRoutes(
       [auth.userId, id, context.get("requestId")]
     );
     return context.json({ id, status: "active" });
+  });
+
+  app.post("/api/tasks/:id/pause", async (context) => {
+    const id = taskIdSchema.parse(context.req.param("id"));
+    const auth = context.get("auth");
+    const result = await dependencies.database.pool.query(
+      `update tasks set status = 'paused', updated_at = now()
+        where id = $1 and owner_user_id = $2 returning id`,
+      [id, auth.userId]
+    );
+    if (!result.rows[0]) throw new ApiError(404, "task_not_found");
+    await dependencies.database.pool.query(
+      `insert into audit_logs (actor_user_id, action, target_type, target_id, request_id)
+       values ($1, 'task.paused', 'task', $2, $3)`,
+      [auth.userId, id, context.get("requestId")]
+    );
+    return context.json({ id, status: "paused" });
+  });
+
+  app.post("/api/tasks/:id/run", async (context) => {
+    const id = taskIdSchema.parse(context.req.param("id"));
+    const auth = context.get("auth");
+    const task = await dependencies.database.pool.query<{ status: string }>(
+      "select status from tasks where id = $1 and owner_user_id = $2",
+      [id, auth.userId]
+    );
+    if (!task.rows[0]) throw new ApiError(404, "task_not_found");
+    if (task.rows[0].status !== "active") throw new ApiError(409, "task_not_active");
+    const dedupeKey = `manual:${id}:${randomUUID()}`;
+    const created = await dependencies.database.pool.query<{ id: string }>(
+      `insert into collection_runs (task_id, trigger, status, dedupe_key)
+       values ($1, 'manual', 'queued', $2) returning id`,
+      [id, dedupeKey]
+    );
+    const runId = created.rows[0]!.id;
+    try {
+      await dependencies.queueCollectionRun({ runId, taskId: id });
+    } catch (error) {
+      await markRunFailure(dependencies.database.pool, {
+        runId,
+        error,
+        attempt: 1,
+        maxAttempts: 1,
+        terminalStatus: "failed"
+      });
+      throw new ApiError(503, "job_queue_unavailable");
+    }
+    return context.json({ id: runId, taskId: id, status: "queued" }, 202);
+  });
+
+  app.get("/api/tasks/:id/runs", async (context) => {
+    const id = taskIdSchema.parse(context.req.param("id"));
+    const auth = context.get("auth");
+    const task = await dependencies.database.pool.query(
+      "select 1 from tasks where id = $1 and owner_user_id = $2",
+      [id, auth.userId]
+    );
+    if (!task.rows[0]) throw new ApiError(404, "task_not_found");
+    const limit = Math.min(Number(context.req.query("limit") ?? 30) || 30, 100);
+    const runs = await dependencies.database.pool.query(
+      `select id, trigger, status, attempt, fetched_count as "fetchedCount",
+              new_count as "newCount", updated_count as "updatedCount",
+              unchanged_count as "unchangedCount", rejected_count as "rejectedCount",
+              error_code as "errorCode", error_message as "errorMessage",
+              scheduled_for as "scheduledFor", started_at as "startedAt",
+              finished_at as "finishedAt", created_at as "createdAt"
+         from collection_runs where task_id = $1 order by created_at desc limit $2`,
+      [id, limit]
+    );
+    return context.json({ runs: runs.rows });
+  });
+
+  app.post("/api/tasks/:id/runs/:runId/retry", async (context) => {
+    const id = taskIdSchema.parse(context.req.param("id"));
+    const runId = taskIdSchema.parse(context.req.param("runId"));
+    const auth = context.get("auth");
+    const original = await dependencies.database.pool.query<{ status: string }>(
+      `select cr.status from collection_runs cr
+         join tasks t on t.id = cr.task_id
+        where cr.id = $1 and cr.task_id = $2 and t.owner_user_id = $3 and t.status = 'active'`,
+      [runId, id, auth.userId]
+    );
+    if (!original.rows[0]) throw new ApiError(404, "run_not_found");
+    if (!new Set(["failed", "dead_letter"]).has(original.rows[0].status)) {
+      throw new ApiError(409, "run_not_retryable");
+    }
+    const created = await dependencies.database.pool.query<{ id: string }>(
+      `insert into collection_runs (task_id, trigger, status, dedupe_key)
+       values ($1, 'retry', 'queued', $2) returning id`,
+      [id, `retry:${runId}:${randomUUID()}`]
+    );
+    const retryRunId = created.rows[0]!.id;
+    try {
+      await dependencies.queueCollectionRun({ runId: retryRunId, taskId: id });
+    } catch (error) {
+      await markRunFailure(dependencies.database.pool, {
+        runId: retryRunId,
+        error,
+        attempt: 1,
+        maxAttempts: 1,
+        terminalStatus: "failed"
+      });
+      throw new ApiError(503, "job_queue_unavailable");
+    }
+    return context.json({ id: retryRunId, taskId: id, status: "queued" }, 202);
+  });
+
+  app.post("/api/tasks/:id/ingest", async (context) => {
+    const id = taskIdSchema.parse(context.req.param("id"));
+    const auth = context.get("auth");
+    const task = await dependencies.database.pool.query<{ status: string }>(
+      "select status from tasks where id = $1 and owner_user_id = $2",
+      [id, auth.userId]
+    );
+    if (!task.rows[0]) throw new ApiError(404, "task_not_found");
+    if (task.rows[0].status !== "active") throw new ApiError(409, "task_not_active");
+    let raw: unknown;
+    try {
+      raw = await context.req.json();
+    } catch {
+      throw new ApiError(400, "invalid_json");
+    }
+    const input = manualIngestRequestSchema.parse(raw);
+    const created = await dependencies.database.pool.query<{ id: string }>(
+      `insert into collection_runs
+        (task_id, trigger, status, dedupe_key, attempt, started_at)
+       values ($1, 'webhook', 'running', $2, 1, now()) returning id`,
+      [id, `webhook:${id}:${randomUUID()}`]
+    );
+    const runId = created.rows[0]!.id;
+    try {
+      await ingestRecords(dependencies.database.pool, {
+        runId,
+        connectorId: "webhook",
+        query: { taskId: id },
+        records: input.records
+      });
+      const stats = await completeIngestRun(dependencies.database.pool, runId);
+      return context.json({ id: runId, taskId: id, status: "succeeded", stats }, 201);
+    } catch (error) {
+      await markRunFailure(dependencies.database.pool, {
+        runId,
+        error,
+        attempt: 1,
+        maxAttempts: 1,
+        terminalStatus: "failed"
+      });
+      throw error;
+    }
   });
 }

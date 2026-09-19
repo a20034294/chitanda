@@ -39,6 +39,21 @@ type Task = {
   model: string;
 };
 
+type CollectionRun = {
+  id: string;
+  trigger: string;
+  status: string;
+  attempt: number;
+  fetchedCount: number;
+  newCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  rejectedCount: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
 function cookie(name: string): string | undefined {
   return document.cookie
     .split("; ")
@@ -243,6 +258,8 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [preview, setPreview] = useState<Preview>();
   const [definitionText, setDefinitionText] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [runs, setRuns] = useState<Record<string, CollectionRun[]>>({});
+  const [openRuns, setOpenRuns] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -307,12 +324,59 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
     }
   }
 
+  async function pause(id: string): Promise<void> {
+    try {
+      await api(`/api/tasks/${id}/pause`, { method: "POST" });
+      await loadTasks();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "暫停失敗");
+    }
+  }
+
+  async function runNow(id: string): Promise<void> {
+    try {
+      await api(`/api/tasks/${id}/run`, { method: "POST" });
+      setMessage("收集工作已排入佇列。");
+      await loadRuns(id);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "排程失敗");
+    }
+  }
+
+  async function loadRuns(id: string): Promise<void> {
+    const result = await api<{ runs: CollectionRun[] }>(`/api/tasks/${id}/runs`);
+    setRuns((current) => ({ ...current, [id]: result.runs }));
+  }
+
+  async function retryRun(taskId: string, runId: string): Promise<void> {
+    try {
+      await api(`/api/tasks/${taskId}/runs/${runId}/retry`, { method: "POST" });
+      setMessage("重試工作已排入佇列。");
+      await loadRuns(taskId);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "重試失敗");
+    }
+  }
+
+  async function toggleRuns(id: string): Promise<void> {
+    if (openRuns === id) {
+      setOpenRuns(undefined);
+      return;
+    }
+    setOpenRuns(id);
+    try {
+      await loadRuns(id);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "載入 runs 失敗");
+    }
+  }
+
   return (
     <div class="workspace">
       <header class="topbar">
         <div>
           <span class="brand">Chitanda</span>
-          <span class="phase">Phase 1</span>
+          <span class="phase">Phase 2</span>
         </div>
         <div class="account">
           <span>{user.displayName}</span>
@@ -429,29 +493,77 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
             )}
             {tasks.map((task) => (
               <article class="task-card" key={task.id}>
-                <div>
-                  <div class="task-title">
-                    <h3>{task.name}</h3>
-                    <span class={`badge badge--${task.status}`}>{task.status}</span>
+                <div class="task-card-main">
+                  <div>
+                    <div class="task-title">
+                      <h3>{task.name}</h3>
+                      <span class={`badge badge--${task.status}`}>{task.status}</span>
+                    </div>
+                    <p>{task.summary}</p>
+                    <small>
+                      rev {task.currentRevision} · {task.provider}/{task.model}
+                    </small>
+                    {task.clarificationQuestions.length > 0 && (
+                      <p class="question-count">
+                        尚有 {task.clarificationQuestions.length} 個問題待處理
+                      </p>
+                    )}
                   </div>
-                  <p>{task.summary}</p>
-                  <small>
-                    rev {task.currentRevision} · {task.provider}/{task.model}
-                  </small>
-                  {task.clarificationQuestions.length > 0 && (
-                    <p class="question-count">
-                      尚有 {task.clarificationQuestions.length} 個問題待處理
-                    </p>
-                  )}
+                  <div class="task-actions">
+                    {task.status === "draft" || task.status === "paused" ? (
+                      <button
+                        class="secondary"
+                        disabled={task.clarificationQuestions.length > 0}
+                        onClick={() => void activate(task.id)}
+                      >
+                        啟用
+                      </button>
+                    ) : (
+                      <>
+                        <button class="secondary" onClick={() => void runNow(task.id)}>
+                          立即執行
+                        </button>
+                        <button class="ghost" onClick={() => void pause(task.id)}>
+                          暫停
+                        </button>
+                      </>
+                    )}
+                    <button class="ghost" onClick={() => void toggleRuns(task.id)}>
+                      {openRuns === task.id ? "收起 Runs" : "查看 Runs"}
+                    </button>
+                  </div>
                 </div>
-                {task.status === "draft" && (
-                  <button
-                    class="secondary"
-                    disabled={task.clarificationQuestions.length > 0}
-                    onClick={() => void activate(task.id)}
-                  >
-                    啟用
-                  </button>
+                {openRuns === task.id && (
+                  <div class="runs-panel">
+                    <div class="runs-heading">
+                      <strong>最近執行</strong>
+                      <button class="ghost" onClick={() => void loadRuns(task.id)}>
+                        重新整理
+                      </button>
+                    </div>
+                    {(runs[task.id] ?? []).length === 0 && <p class="empty">尚無執行紀錄。</p>}
+                    {(runs[task.id] ?? []).map((run) => (
+                      <div class="run-row" key={run.id}>
+                        <span class={`run-status run-status--${run.status}`}>{run.status}</span>
+                        <span>{run.trigger}</span>
+                        <span>
+                          {run.newCount} new · {run.updatedCount} updated · {run.unchangedCount}{" "}
+                          unchanged
+                        </span>
+                        <time>{new Date(run.createdAt).toLocaleString()}</time>
+                        {run.errorCode && (
+                          <span class="run-error" title={run.errorMessage ?? run.errorCode}>
+                            {run.errorCode}
+                          </span>
+                        )}
+                        {(run.status === "failed" || run.status === "dead_letter") && (
+                          <button class="ghost" onClick={() => void retryRun(task.id, run.id)}>
+                            重試
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </article>
             ))}

@@ -15,6 +15,13 @@
       "when": 1789813735057,
       "tag": "0001_nosy_winter_soldier",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789825650683,
+      "tag": "0002_military_vanisher",
+      "breakpoints": true
     }
   ]
 }
