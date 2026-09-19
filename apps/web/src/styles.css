@@ -258,6 +258,102 @@ code,
 .task-section {
   padding-top: 1rem;
 }
+.inbox-section {
+  grid-column: 1 / -1;
+  padding-top: 1rem;
+}
+.event-list {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+.event-card,
+.event-detail {
+  padding: 1rem 1.15rem;
+  border: 1px solid rgb(32 55 46 / 14%);
+  border-radius: 0.8rem;
+  background: rgb(255 255 251 / 78%);
+}
+.event-card--unread {
+  border-left: 4px solid #2b7a58;
+}
+.event-card--archived {
+  opacity: 0.65;
+}
+.event-main,
+.event-actions,
+.feedback-actions,
+.event-title {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.event-main {
+  justify-content: space-between;
+}
+.event-actions,
+.feedback-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.event-title h3,
+.event-card p,
+.event-detail h3 {
+  margin: 0;
+}
+.event-card p {
+  margin: 0.4rem 0;
+  color: #506059;
+}
+.event-type {
+  padding: 0.15rem 0.4rem;
+  border-radius: 999px;
+  color: #1f6248;
+  background: #d6eadd;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.feedback-actions {
+  margin-top: 0.7rem;
+}
+.feedback-actions button {
+  padding: 0.35rem 0.55rem;
+  font-size: 0.7rem;
+}
+.feedback-actions .selected {
+  background: #275e47;
+}
+.event-detail {
+  margin-top: 1rem;
+  box-shadow: 0 1rem 3rem rgb(23 50 39 / 12%);
+}
+.evidence-list {
+  padding-left: 1.2rem;
+}
+.evidence-list blockquote {
+  margin: 0.25rem 0 0.8rem;
+  padding-left: 0.7rem;
+  border-left: 2px solid #b7c8bf;
+  color: #53635b;
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.55rem;
+}
+.facts div {
+  padding: 0.55rem;
+  border-radius: 0.5rem;
+  background: #eef2ee;
+}
+.facts dt {
+  color: #64726b;
+  font-size: 0.7rem;
+}
+.facts dd {
+  margin: 0.2rem 0 0;
+}
 .task-list {
   display: grid;
   gap: 0.75rem;
@@ -314,7 +410,7 @@ code,
 }
 .run-row {
   display: grid;
-  grid-template-columns: auto auto 1fr auto auto;
+  grid-template-columns: auto auto auto 1fr auto auto auto;
   gap: 0.65rem;
   align-items: center;
   padding: 0.55rem 0;
@@ -352,7 +448,8 @@ code,
 
 @media (max-width: 640px) {
   .form-row,
-  .task-card-main {
+  .task-card-main,
+  .event-main {
     align-items: stretch;
     flex-direction: column;
   }

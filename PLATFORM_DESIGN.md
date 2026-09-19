@@ -1,6 +1,6 @@
 # Chitanda 平台設計定義
 
-> 狀態：Draft v0.4（Phase 2 implemented）<br>
+> 狀態：Draft v0.5（Phase 3 implemented）<br>
 > 日期：2026-09-19<br>
 > 目標讀者：產品維護者、開發者、來源 connector 開發者
 > 技術基線：Node.js 24 LTS、TypeScript、Hono、Preact + Vite、PostgreSQL
@@ -369,24 +369,24 @@ Provider 必須接受 idempotency key，並回報 delivered、retryable failure 
 
 主要資料表如下：
 
-| Table                  | 用途                                         |
-| ---------------------- | -------------------------------------------- |
-| `users`                | 本機帳號、偏好、時區、狀態                   |
-| `sessions`             | 安全 cookie session                          |
-| `tasks`                | 任務 metadata、狀態、owner                   |
-| `task_revisions`       | 原始自然語言、版本化 definition、解析資訊    |
-| `source_configs`       | Connector 設定及 secret references           |
-| `collection_runs`      | 每次執行狀態、統計、錯誤與時間               |
-| `source_items`         | 正規化內容、provenance、canonical identity   |
-| `source_item_versions` | 內容變更歷史與 hash                          |
-| `task_candidates`      | item 與 task 的預篩/分析結果                 |
-| `analysis_results`     | prompt version、provider、model、結果、usage |
-| `events`               | 去重後的使用者事件                           |
-| `deliveries`           | 通知排程、嘗試次數與 receipt                 |
-| `connector_cursors`    | 每個 task/source 的增量擷取狀態              |
-| `secrets`              | 加密後的 connector/provider credentials      |
-| `audit_logs`           | 設定與狀態變更紀錄                           |
-| `user_feedback`        | useful、irrelevant、duplicate 等回饋         |
+| Table                  | 用途                                                 |
+| ---------------------- | ---------------------------------------------------- |
+| `users`                | 本機帳號、偏好、時區、狀態                           |
+| `sessions`             | 安全 cookie session                                  |
+| `tasks`                | 任務 metadata、狀態、owner                           |
+| `task_revisions`       | 原始自然語言、版本化 definition、解析資訊            |
+| `source_configs`       | Connector 設定及 secret references                   |
+| `collection_runs`      | 每次執行固定的 task revision、狀態、統計、錯誤與時間 |
+| `source_items`         | 正規化內容、provenance、canonical identity           |
+| `source_item_versions` | 內容變更歷史與 hash                                  |
+| `task_candidates`      | item 與 task 的預篩/分析結果                         |
+| `analysis_results`     | prompt version、provider、model、結果、usage         |
+| `events`               | 去重後的使用者事件                                   |
+| `deliveries`           | 通知排程、嘗試次數與 receipt                         |
+| `connector_cursors`    | 每個 task/source 的增量擷取狀態                      |
+| `secrets`              | 加密後的 connector/provider credentials              |
+| `audit_logs`           | 設定與狀態變更紀錄                                   |
+| `user_feedback`        | useful、irrelevant、duplicate 等回饋                 |
 
 重要唯一鍵：
 
@@ -413,8 +413,11 @@ POST   /api/tasks/:id/activate
 POST   /api/tasks/:id/pause
 POST   /api/tasks/:id/run
 GET    /api/tasks/:id/runs
+POST   /api/tasks/:id/runs/:runId/retry
+POST   /api/tasks/:id/ingest
 GET    /api/events
 GET    /api/events/:id
+POST   /api/events/:id/state
 POST   /api/events/:id/feedback
 GET    /api/connectors
 POST   /api/connectors/:id/test

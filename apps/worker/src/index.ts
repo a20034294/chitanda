@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
+import { analyzeCollectionRun, markAnalysisFailure } from "@chitanda/analysis";
 import { loadConfig, formatConfigError } from "@chitanda/config";
 import { taskDefinitionV1Schema, type ServiceStatus } from "@chitanda/contracts";
 import { createDatabase } from "@chitanda/db";
+import { createLlmProviders } from "@chitanda/llm";
 import { collectTaskRun, isScheduleDue, markRunFailure } from "@chitanda/collection";
 import { createBuiltinConnectors } from "@chitanda/connectors";
 import { run, type Runner, type TaskList } from "graphile-worker";
@@ -23,6 +25,7 @@ async function main(): Promise<void> {
     });
   });
   const connectors = createBuiltinConnectors();
+  const providers = createLlmProviders(config);
   let runner: Runner | null = null;
 
   const healthServer = createServer((request, response) => {
@@ -77,15 +80,16 @@ async function main(): Promise<void> {
       const now = new Date();
       const tasks = await helpers.query<{
         id: string;
+        current_revision: number;
         definition: unknown;
         last_run_at: Date | null;
       }>(
-        `select t.id, r.definition, max(cr.created_at) as last_run_at
+        `select t.id, t.current_revision, r.definition, max(cr.created_at) as last_run_at
            from tasks t
            join task_revisions r on r.task_id = t.id and r.revision = t.current_revision
            left join collection_runs cr on cr.task_id = t.id
           where t.status = 'active'
-          group by t.id, r.definition`
+          group by t.id, t.current_revision, r.definition`
       );
       for (const task of tasks.rows) {
         try {
@@ -102,10 +106,10 @@ async function main(): Promise<void> {
           const bucket = Math.floor(now.getTime() / 60_000);
           const inserted = await helpers.query<{ id: string }>(
             `insert into collection_runs
-              (task_id, trigger, status, dedupe_key, scheduled_for)
-             values ($1, 'scheduled', 'queued', $2, $3)
+              (task_id, task_revision, trigger, status, dedupe_key, scheduled_for)
+             values ($1, $2, 'scheduled', 'queued', $3, $4)
              on conflict (dedupe_key) do nothing returning id`,
-            [task.id, `scheduled:${task.id}:${bucket}`, now]
+            [task.id, task.current_revision, `scheduled:${task.id}:${bucket}`, now]
           );
           const runId = inserted.rows[0]?.id;
           if (runId) {
@@ -139,6 +143,25 @@ async function main(): Promise<void> {
           attempt: helpers.job.attempts,
           signal: helpers.abortSignal
         });
+        try {
+          await helpers.query(
+            "update collection_runs set analysis_status = 'queued' where id = $1",
+            [runId]
+          );
+          await helpers.addJob(
+            "analyze_run",
+            { runId, taskId },
+            { jobKey: `analysis:${runId}`, jobKeyMode: "unsafe_dedupe", maxAttempts: 3 }
+          );
+        } catch (queueError) {
+          await helpers.query(
+            "update collection_runs set analysis_status = 'pending' where id = $1",
+            [runId]
+          );
+          helpers.logger.error(
+            `Analysis queueing for run ${runId} will be recovered: ${queueError instanceof Error ? queueError.message : String(queueError)}`
+          );
+        }
         helpers.logger.info(`Collection run ${runId} completed: ${JSON.stringify(stats)}`);
       } catch (error) {
         await markRunFailure(database.pool, {
@@ -150,6 +173,50 @@ async function main(): Promise<void> {
         throw error;
       }
     },
+    analyze_run: async (payload, helpers) => {
+      if (
+        !payload ||
+        typeof payload !== "object" ||
+        typeof (payload as Record<string, unknown>).runId !== "string" ||
+        typeof (payload as Record<string, unknown>).taskId !== "string"
+      ) {
+        throw new Error("Invalid analyze_run payload");
+      }
+      const { runId, taskId } = payload as { runId: string; taskId: string };
+      try {
+        const stats = await analyzeCollectionRun(database.pool, providers, { runId, taskId });
+        helpers.logger.info(`Analysis run ${runId} completed: ${JSON.stringify(stats)}`);
+      } catch (error) {
+        await markAnalysisFailure(database.pool, {
+          runId,
+          error,
+          attempt: helpers.job.attempts,
+          maxAttempts: helpers.job.max_attempts
+        });
+        throw error;
+      }
+    },
+    schedule_analysis: async (_payload, helpers) => {
+      const pending = await helpers.query<{ id: string; task_id: string }>(
+        `select id, task_id from collection_runs
+          where status = 'succeeded' and analysis_status in ('pending', 'queued')
+          order by created_at limit 100`
+      );
+      for (const pendingRun of pending.rows) {
+        await helpers.query("update collection_runs set analysis_status = 'queued' where id = $1", [
+          pendingRun.id
+        ]);
+        await helpers.addJob(
+          "analyze_run",
+          { runId: pendingRun.id, taskId: pendingRun.task_id },
+          {
+            jobKey: `analysis:${pendingRun.id}`,
+            jobKeyMode: "unsafe_dedupe",
+            maxAttempts: 3
+          }
+        );
+      }
+    },
     heartbeat: async (_payload, helpers) => {
       helpers.logger.info("Worker heartbeat job completed");
     }
@@ -159,11 +226,12 @@ async function main(): Promise<void> {
     connectionString: config.database.url,
     concurrency: config.worker.concurrency,
     pollInterval: config.worker.pollIntervalMs,
-    crontab: "* * * * * schedule_due_tasks",
+    crontab: "* * * * * schedule_due_tasks\n* * * * * schedule_analysis",
     noHandleSignals: true,
     taskList
   });
   await runner.addJob("schedule_due_tasks", {}, { jobKey: "schedule-startup", maxAttempts: 3 });
+  await runner.addJob("schedule_analysis", {}, { jobKey: "analysis-startup", maxAttempts: 3 });
   logger.info({ concurrency: config.worker.concurrency }, "Job worker started");
 
   let shuttingDown = false;

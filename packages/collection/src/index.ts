@@ -27,6 +27,7 @@ export type CollectionStats = {
 type RunRow = {
   id: string;
   task_id: string;
+  task_revision: number | null;
   status: string;
 };
 
@@ -91,6 +92,7 @@ async function persistRecord(
     [connectorId, sourceKey, externalId]
   );
   let itemId: string;
+  let itemVersionId: string;
   let outcome: CollectionOutcome;
   if (!existing.rows[0]) {
     const inserted = await client.query<{ id: string }>(
@@ -113,20 +115,22 @@ async function persistRecord(
       ]
     );
     itemId = inserted.rows[0]!.id;
-    await client.query(
+    const version = await client.query<{ id: string }>(
       `insert into source_item_versions
         (source_item_id, version, content_hash, normalized, raw_payload)
-       values ($1, 1, $2, $3::jsonb, $4::jsonb)`,
+       values ($1, 1, $2, $3::jsonb, $4::jsonb) returning id`,
       [itemId, contentHash, stableJson(record), stableJson(record.rawPayload ?? null)]
     );
+    itemVersionId = version.rows[0]!.id;
     outcome = "new";
   } else {
     itemId = existing.rows[0].id;
-    const seen = await client.query(
-      "select 1 from source_item_versions where source_item_id = $1 and content_hash = $2",
+    const seen = await client.query<{ id: string }>(
+      "select id from source_item_versions where source_item_id = $1 and content_hash = $2",
       [itemId, contentHash]
     );
-    if (seen.rowCount) {
+    if (seen.rows[0]) {
+      itemVersionId = seen.rows[0].id;
       await client.query("update source_items set last_seen_at = now() where id = $1", [itemId]);
       outcome = "unchanged";
     } else {
@@ -148,20 +152,22 @@ async function persistRecord(
           itemId
         ]
       );
-      await client.query(
+      const insertedVersion = await client.query<{ id: string }>(
         `insert into source_item_versions
           (source_item_id, version, content_hash, normalized, raw_payload)
-         values ($1, $2, $3, $4::jsonb, $5::jsonb)`,
+         values ($1, $2, $3, $4::jsonb, $5::jsonb) returning id`,
         [itemId, version, contentHash, stableJson(record), stableJson(record.rawPayload ?? null)]
       );
+      itemVersionId = insertedVersion.rows[0]!.id;
       outcome = "updated";
     }
   }
   await client.query(
-    `insert into task_run_items (run_id, source_item_id, outcome)
-     values ($1, $2, $3)
-     on conflict (run_id, source_item_id) do nothing`,
-    [runId, itemId, outcome]
+    `insert into task_run_items (run_id, source_item_id, source_item_version_id, outcome)
+     values ($1, $2, $3, $4)
+     on conflict (run_id, source_item_id) do update
+       set source_item_version_id = excluded.source_item_version_id, outcome = excluded.outcome`,
+    [runId, itemId, itemVersionId, outcome]
   );
   return outcome;
 }
@@ -239,7 +245,7 @@ export async function collectTaskRun(
   input: { runId: string; taskId: string; attempt: number; signal?: AbortSignal }
 ): Promise<CollectionStats> {
   const run = await pool.query<RunRow>(
-    "select id, task_id, status from collection_runs where id = $1 and task_id = $2",
+    "select id, task_id, task_revision, status from collection_runs where id = $1 and task_id = $2",
     [input.runId, input.taskId]
   );
   if (!run.rows[0]) throw new Error("Collection run not found");
@@ -254,9 +260,10 @@ export async function collectTaskRun(
   );
   const task = await pool.query<{ definition: unknown }>(
     `select r.definition from tasks t
-       join task_revisions r on r.task_id = t.id and r.revision = t.current_revision
+       join task_revisions r on r.task_id = t.id
+         and r.revision = coalesce($2, t.current_revision)
       where t.id = $1`,
-    [input.taskId]
+    [input.taskId, run.rows[0].task_revision]
   );
   if (!task.rows[0]) throw new Error("Task not found");
   const definition = taskDefinitionV1Schema.parse(task.rows[0].definition);

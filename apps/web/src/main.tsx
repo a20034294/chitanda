@@ -41,6 +41,7 @@ type Task = {
 
 type CollectionRun = {
   id: string;
+  taskRevision: number | null;
   trigger: string;
   status: string;
   attempt: number;
@@ -49,9 +50,44 @@ type CollectionRun = {
   updatedCount: number;
   unchangedCount: number;
   rejectedCount: number;
+  analysisStatus: string;
+  candidateCount: number;
+  eventCount: number;
+  analysisErrorCode: string | null;
+  analysisErrorMessage: string | null;
   errorCode: string | null;
   errorMessage: string | null;
   createdAt: string;
+};
+
+type Evidence = { sourceField: string; quote: string };
+
+type InboxEvent = {
+  id: string;
+  eventType: string;
+  state: "unread" | "read" | "archived";
+  severity: string;
+  title: string;
+  summary: string;
+  reason: string;
+  evidence: Evidence[];
+  occurredAt: string;
+  createdAt: string;
+  taskId: string;
+  taskName: string;
+  canonicalUrl: string | null;
+  score: number | string;
+  provider: string;
+  model: string;
+  feedbackRating: string | null;
+};
+
+type EventDetail = InboxEvent & {
+  facts: Array<{ name: string; value: string; confidence: number }>;
+  uncertainties: string[];
+  promptVersion: string;
+  normalized: { content?: string; [key: string]: unknown };
+  feedbackNote: string | null;
 };
 
 function cookie(name: string): string | undefined {
@@ -259,6 +295,8 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [definitionText, setDefinitionText] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [runs, setRuns] = useState<Record<string, CollectionRun[]>>({});
+  const [events, setEvents] = useState<InboxEvent[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<EventDetail>();
   const [openRuns, setOpenRuns] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -268,11 +306,61 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
     setTasks(result.tasks);
   }
 
+  async function loadEvents(): Promise<void> {
+    const result = await api<{ events: InboxEvent[] }>("/api/events?limit=50");
+    setEvents(result.events);
+  }
+
   useEffect(() => {
     void loadTasks().catch((error: unknown) =>
       setMessage(error instanceof Error ? error.message : "載入失敗")
     );
+    void loadEvents().catch((error: unknown) =>
+      setMessage(error instanceof Error ? error.message : "載入 Inbox 失敗")
+    );
   }, []);
+
+  async function openEvent(id: string): Promise<void> {
+    try {
+      const result = await api<{ event: EventDetail }>(`/api/events/${id}`);
+      setSelectedEvent(result.event);
+      if (result.event.state === "unread") await setEventState(id, "read", false);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "載入事件失敗");
+    }
+  }
+
+  async function setEventState(
+    id: string,
+    state: "unread" | "read" | "archived",
+    reload = true
+  ): Promise<void> {
+    await api(`/api/events/${id}/state`, { method: "POST", body: JSON.stringify({ state }) });
+    if (reload) await loadEvents();
+    else {
+      setEvents((current) =>
+        current.map((event) => (event.id === id ? { ...event, state } : event))
+      );
+    }
+  }
+
+  async function sendFeedback(
+    id: string,
+    rating: "useful" | "irrelevant" | "duplicate"
+  ): Promise<void> {
+    try {
+      await api(`/api/events/${id}/feedback`, {
+        method: "POST",
+        body: JSON.stringify({ rating, note: null })
+      });
+      setEvents((current) =>
+        current.map((event) => (event.id === id ? { ...event, feedbackRating: rating } : event))
+      );
+      if (selectedEvent?.id === id) setSelectedEvent({ ...selectedEvent, feedbackRating: rating });
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "回饋儲存失敗");
+    }
+  }
 
   async function interpret(event: Event): Promise<void> {
     event.preventDefault();
@@ -376,7 +464,7 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
       <header class="topbar">
         <div>
           <span class="brand">Chitanda</span>
-          <span class="phase">Phase 2</span>
+          <span class="phase">Phase 3</span>
         </div>
         <div class="account">
           <span>{user.displayName}</span>
@@ -477,6 +565,98 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
           </section>
         )}
 
+        <section class="inbox-section">
+          <div class="section-heading">
+            <div>
+              <p class="kicker">PERSONAL INBOX</p>
+              <h2>事件</h2>
+            </div>
+            <button class="ghost" onClick={() => void loadEvents()}>
+              重新整理
+            </button>
+          </div>
+          <div class="event-list">
+            {events.length === 0 && <p class="empty">目前沒有符合條件的新事件。</p>}
+            {events.map((event) => (
+              <article class={`event-card event-card--${event.state}`} key={event.id}>
+                <div class="event-main">
+                  <div>
+                    <div class="event-title">
+                      <span class="event-type">{event.eventType}</span>
+                      <h3>{event.title}</h3>
+                    </div>
+                    <p>{event.summary}</p>
+                    <small>
+                      {event.taskName} · score {Math.round(Number(event.score) * 100)}% ·{" "}
+                      {event.provider}
+                    </small>
+                  </div>
+                  <div class="event-actions">
+                    <button class="secondary" onClick={() => void openEvent(event.id)}>
+                      詳情
+                    </button>
+                    {event.canonicalUrl && (
+                      <a href={event.canonicalUrl} target="_blank" rel="noreferrer">
+                        原始來源
+                      </a>
+                    )}
+                    <button class="ghost" onClick={() => void setEventState(event.id, "archived")}>
+                      封存
+                    </button>
+                  </div>
+                </div>
+                <div class="feedback-actions">
+                  {(["useful", "irrelevant", "duplicate"] as const).map((rating) => (
+                    <button
+                      class={event.feedbackRating === rating ? "selected" : "ghost"}
+                      onClick={() => void sendFeedback(event.id, rating)}
+                    >
+                      {rating}
+                    </button>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+          {selectedEvent && (
+            <aside class="event-detail">
+              <div class="section-heading">
+                <div>
+                  <p class="kicker">EVENT EVIDENCE</p>
+                  <h3>{selectedEvent.title}</h3>
+                </div>
+                <button class="ghost" onClick={() => setSelectedEvent(undefined)}>
+                  關閉
+                </button>
+              </div>
+              <p>{selectedEvent.reason}</p>
+              {selectedEvent.evidence.length > 0 && (
+                <ul class="evidence-list">
+                  {selectedEvent.evidence.map((entry) => (
+                    <li>
+                      <strong>{entry.sourceField}</strong>
+                      <blockquote>{entry.quote}</blockquote>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {selectedEvent.facts.length > 0 && (
+                <dl class="facts">
+                  {selectedEvent.facts.map((fact) => (
+                    <div>
+                      <dt>{fact.name}</dt>
+                      <dd>{fact.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {selectedEvent.uncertainties.length > 0 && (
+                <p class="muted">不確定：{selectedEvent.uncertainties.join("；")}</p>
+              )}
+            </aside>
+          )}
+        </section>
+
         <section class="task-section">
           <div class="section-heading">
             <div>
@@ -546,9 +726,13 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
                       <div class="run-row" key={run.id}>
                         <span class={`run-status run-status--${run.status}`}>{run.status}</span>
                         <span>{run.trigger}</span>
+                        <span>rev {run.taskRevision ?? "legacy"}</span>
                         <span>
                           {run.newCount} new · {run.updatedCount} updated · {run.unchangedCount}{" "}
                           unchanged
+                        </span>
+                        <span>
+                          analysis {run.analysisStatus} · {run.eventCount} events
                         </span>
                         <time>{new Date(run.createdAt).toLocaleString()}</time>
                         {run.errorCode && (

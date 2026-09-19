@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+const httpUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  }, "Only HTTP and HTTPS URLs are allowed");
+
 export const serviceStatusSchema = z.object({
   status: z.enum(["ok", "degraded"]),
   service: z.enum(["api", "worker"]),
@@ -158,15 +166,13 @@ export const createTaskRequestSchema = z
 export const normalizedSourceRecordSchema = z
   .object({
     externalId: z.string().min(1).max(2000).nullable(),
-    canonicalUrl: z.string().url().max(8000).nullable(),
+    canonicalUrl: httpUrlSchema.max(8000).nullable(),
     title: z.string().min(1).max(2000),
     content: z.string().max(500_000),
     author: z.string().max(1000).nullable(),
     publishedAt: z.string().datetime().nullable(),
     language: z.string().max(50).nullable(),
-    media: z
-      .array(z.object({ url: z.string().url(), type: z.string().nullable() }).strict())
-      .max(100),
+    media: z.array(z.object({ url: httpUrlSchema, type: z.string().nullable() }).strict()).max(100),
     metadata: z.record(z.string(), z.unknown()),
     rawPayload: z.unknown()
   })
@@ -188,3 +194,43 @@ export const collectionRunStatusSchema = z.enum([
   "failed",
   "dead_letter"
 ]);
+
+export const analysisEvidenceSchema = z
+  .object({
+    sourceField: z.string().min(1).max(200),
+    quote: z.string().min(1).max(500)
+  })
+  .strict();
+
+export const analysisFactSchema = z
+  .object({
+    name: z.string().min(1).max(200),
+    value: z.string().max(2000),
+    confidence: z.number().min(0).max(1)
+  })
+  .strict();
+
+export const contentAnalysisSchema = z
+  .object({
+    matched: z.boolean(),
+    score: z.number().min(0).max(1),
+    reason: z.string().min(1).max(4000),
+    facts: z.array(analysisFactSchema).max(50),
+    summary: z.string().min(1).max(4000),
+    uncertainties: z.array(z.string().min(1).max(1000)).max(20),
+    evidence: z.array(analysisEvidenceSchema).max(20)
+  })
+  .strict();
+
+export type ContentAnalysis = z.infer<typeof contentAnalysisSchema>;
+
+export const eventStateSchema = z.enum(["unread", "read", "archived"]);
+
+export const updateEventStateRequestSchema = z.object({ state: eventStateSchema }).strict();
+
+export const eventFeedbackRequestSchema = z
+  .object({
+    rating: z.enum(["useful", "irrelevant", "duplicate"]),
+    note: z.string().max(2000).nullable().default(null)
+  })
+  .strict();

@@ -9,6 +9,7 @@ import type { ServiceStatus } from "@chitanda/contracts";
 import type { Database } from "@chitanda/db";
 import type { LlmProvider } from "@chitanda/llm";
 import { registerAuthRoutes } from "./auth.js";
+import { registerEventRoutes } from "./events.js";
 import { ApiError, type AppVariables } from "./context.js";
 import { registerTaskRoutes } from "./tasks.js";
 
@@ -19,6 +20,7 @@ type AppDependencies = {
   database?: Database;
   providers?: Map<string, LlmProvider>;
   queueCollectionRun?: (input: { runId: string; taskId: string }) => Promise<void>;
+  queueAnalysisRun?: (input: { runId: string; taskId: string }) => Promise<void>;
   staticRoot?: string;
 };
 
@@ -39,6 +41,7 @@ export function createApp({
   database,
   providers,
   queueCollectionRun,
+  queueAnalysisRun,
   staticRoot
 }: AppDependencies): Hono<{
   Variables: AppVariables;
@@ -120,10 +123,17 @@ export function createApp({
     })
   );
 
-  if (database && providers && queueCollectionRun) {
-    const apiDependencies = { config, database, providers, queueCollectionRun };
+  if (database && providers && queueCollectionRun && queueAnalysisRun) {
+    const apiDependencies = {
+      config,
+      database,
+      providers,
+      queueCollectionRun,
+      queueAnalysisRun
+    };
     registerAuthRoutes(app, apiDependencies);
     registerTaskRoutes(app, apiDependencies);
+    registerEventRoutes(app, apiDependencies);
   }
 
   if (staticRoot) {

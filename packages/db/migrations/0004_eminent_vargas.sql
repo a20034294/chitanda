@@ -1,0 +1,1 @@
+ALTER TABLE "collection_runs" ADD COLUMN "task_revision" integer;

@@ -106,6 +106,7 @@ export const collectionRuns = pgTable(
     taskId: uuid("task_id")
       .notNull()
       .references(() => tasks.id, { onDelete: "cascade" }),
+    taskRevision: integer("task_revision"),
     trigger: text("trigger").notNull(),
     status: text("status").notNull().default("queued"),
     dedupeKey: text("dedupe_key").notNull().unique(),
@@ -115,6 +116,11 @@ export const collectionRuns = pgTable(
     updatedCount: integer("updated_count").notNull().default(0),
     unchangedCount: integer("unchanged_count").notNull().default(0),
     rejectedCount: integer("rejected_count").notNull().default(0),
+    analysisStatus: text("analysis_status").notNull().default("pending"),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    eventCount: integer("event_count").notNull().default(0),
+    analysisErrorCode: text("analysis_error_code"),
+    analysisErrorMessage: text("analysis_error_message"),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
     scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
@@ -186,6 +192,9 @@ export const taskRunItems = pgTable(
     sourceItemId: uuid("source_item_id")
       .notNull()
       .references(() => sourceItems.id, { onDelete: "cascade" }),
+    sourceItemVersionId: uuid("source_item_version_id").references(() => sourceItemVersions.id, {
+      onDelete: "cascade"
+    }),
     outcome: text("outcome").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
   },
@@ -193,6 +202,117 @@ export const taskRunItems = pgTable(
     primaryKey({ columns: [table.runId, table.sourceItemId] }),
     index("task_run_items_source_item_id_idx").on(table.sourceItemId)
   ]
+);
+
+export const taskCandidates = pgTable(
+  "task_candidates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    sourceItemId: uuid("source_item_id")
+      .notNull()
+      .references(() => sourceItems.id, { onDelete: "cascade" }),
+    sourceItemVersionId: uuid("source_item_version_id")
+      .notNull()
+      .references(() => sourceItemVersions.id, { onDelete: "cascade" }),
+    collectionRunId: uuid("collection_run_id")
+      .notNull()
+      .references(() => collectionRuns.id, { onDelete: "cascade" }),
+    collectionOutcome: text("collection_outcome").notNull(),
+    status: text("status").notNull().default("pending"),
+    deterministicMatched: boolean("deterministic_matched").notNull().default(false),
+    effectiveMatched: boolean("effective_matched"),
+    filterDetails: jsonb("filter_details").$type<Record<string, unknown>>().notNull().default({}),
+    changedFields: jsonb("changed_fields").$type<string[]>().notNull().default([]),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    analyzedAt: timestamp("analyzed_at", { withTimezone: true })
+  },
+  (table) => [
+    uniqueIndex("task_candidates_task_version_idx").on(table.taskId, table.sourceItemVersionId),
+    index("task_candidates_task_id_idx").on(table.taskId),
+    index("task_candidates_status_idx").on(table.status)
+  ]
+);
+
+export const analysisResults = pgTable(
+  "analysis_results",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => taskCandidates.id, { onDelete: "cascade" }),
+    matched: boolean("matched").notNull(),
+    scoreBasisPoints: integer("score_basis_points").notNull(),
+    reason: text("reason").notNull(),
+    facts: jsonb("facts").$type<Record<string, unknown>[]>().notNull().default([]),
+    summary: text("summary").notNull(),
+    uncertainties: jsonb("uncertainties").$type<string[]>().notNull().default([]),
+    evidence: jsonb("evidence").$type<Record<string, unknown>[]>().notNull().default([]),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    requestId: text("request_id"),
+    usage: jsonb("usage").$type<Record<string, unknown>>().notNull().default({}),
+    inputHash: text("input_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [uniqueIndex("analysis_results_candidate_idx").on(table.candidateId)]
+);
+
+export const events = pgTable(
+  "events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    sourceItemId: uuid("source_item_id")
+      .notNull()
+      .references(() => sourceItems.id, { onDelete: "cascade" }),
+    sourceItemVersionId: uuid("source_item_version_id")
+      .notNull()
+      .references(() => sourceItemVersions.id, { onDelete: "cascade" }),
+    analysisResultId: uuid("analysis_result_id")
+      .notNull()
+      .references(() => analysisResults.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    fingerprint: text("fingerprint").notNull().unique(),
+    state: text("state").notNull().default("unread"),
+    severity: text("severity").notNull().default("normal"),
+    title: text("title").notNull(),
+    summary: text("summary").notNull(),
+    reason: text("reason").notNull(),
+    evidence: jsonb("evidence").$type<Record<string, unknown>[]>().notNull().default([]),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("events_task_id_idx").on(table.taskId),
+    index("events_state_created_at_idx").on(table.state, table.createdAt)
+  ]
+);
+
+export const userFeedback = pgTable(
+  "user_feedback",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    rating: text("rating").notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [uniqueIndex("user_feedback_event_user_idx").on(table.eventId, table.userId)]
 );
 
 export const connectorCursors = pgTable(

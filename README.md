@@ -86,3 +86,23 @@ sources and are not scheduled for outbound requests.
 Outbound connectors allow only HTTP(S), reject embedded URL credentials and private/loopback DNS
 answers, enforce a 30-second timeout, and cap responses at 5 MiB. Task definitions must use public
 source URLs; local fixture endpoints are intentionally blocked in production.
+
+## Phase 3 analysis and Inbox
+
+Collected item versions are processed in a separate, retryable analysis job. Deterministic filters
+run first; items that pass can then use the task's selected Ollama or OpenAI provider for structured
+classification, fact extraction, summarization, uncertainty, and evidence. Content sent to an LLM
+is treated as untrusted data and cannot invoke tools. Every collection run pins its immutable task
+revision so later task edits cannot change the meaning of an in-flight or retried run.
+
+- `GET /api/events` lists the authenticated user's Inbox with optional `state`, `before`, and
+  `limit` filters.
+- `GET /api/events/:id` returns the exact immutable source version, analysis metadata, facts,
+  uncertainty, and evidence used for the event.
+- `POST /api/events/:id/state` marks an event `unread`, `read`, or `archived`.
+- `POST /api/events/:id/feedback` stores `useful`, `irrelevant`, or `duplicate` feedback.
+
+The worker creates idempotent `new_item`, `content_changed`, `field_changed`,
+`threshold_crossed`, and `back_in_stock` events according to each task definition. The Runs panel
+shows collection and analysis states separately, while the Inbox provides source links and short
+evidence excerpts.

@@ -11,11 +11,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@chitanda/analysis": "workspace:*",
     "@chitanda/collection": "workspace:*",
     "@chitanda/config": "workspace:*",
     "@chitanda/connectors": "workspace:*",
     "@chitanda/contracts": "workspace:*",
     "@chitanda/db": "workspace:*",
+    "@chitanda/llm": "workspace:*",
     "graphile-worker": "^0.18.0",
     "pino": "^10.3.1"
   }

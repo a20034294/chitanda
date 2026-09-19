@@ -38,8 +38,8 @@ const connectors = new Map([[fixtureConnector.id, fixtureConnector]]);
 async function createRun(): Promise<string> {
   const runId = randomUUID();
   await pool!.query(
-    `insert into collection_runs (id, task_id, trigger, status, dedupe_key)
-     values ($1, $2, 'manual', 'queued', $3)`,
+    `insert into collection_runs (id, task_id, task_revision, trigger, status, dedupe_key)
+     values ($1, $2, 1, 'manual', 'queued', $3)`,
     [runId, taskId, `integration:${runId}`]
   );
   return runId;

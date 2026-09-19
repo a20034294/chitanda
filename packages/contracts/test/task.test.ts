@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { interpretedTaskSchema, taskDefinitionV1Schema } from "../src/index.js";
+import {
+  interpretedTaskSchema,
+  normalizedSourceRecordSchema,
+  taskDefinitionV1Schema
+} from "../src/index.js";
 
 export const validDefinition = {
   schemaVersion: 1 as const,
@@ -53,5 +57,34 @@ describe("TaskDefinitionV1", () => {
         confidence: 0.8
       }).clarificationQuestions
     ).toHaveLength(1);
+  });
+});
+
+describe("NormalizedSourceRecord", () => {
+  it("rejects non-HTTP source and media URLs", () => {
+    const base = {
+      externalId: "1",
+      title: "Item",
+      content: "",
+      author: null,
+      publishedAt: null,
+      language: null,
+      metadata: {},
+      rawPayload: null
+    };
+    expect(() =>
+      normalizedSourceRecordSchema.parse({
+        ...base,
+        canonicalUrl: "javascript:alert(1)",
+        media: []
+      })
+    ).toThrow();
+    expect(() =>
+      normalizedSourceRecordSchema.parse({
+        ...base,
+        canonicalUrl: null,
+        media: [{ url: "data:text/html,test", type: "text/html" }]
+      })
+    ).toThrow();
   });
 });

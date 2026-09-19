@@ -270,17 +270,20 @@ export function registerTaskRoutes(
   app.post("/api/tasks/:id/run", async (context) => {
     const id = taskIdSchema.parse(context.req.param("id"));
     const auth = context.get("auth");
-    const task = await dependencies.database.pool.query<{ status: string }>(
-      "select status from tasks where id = $1 and owner_user_id = $2",
-      [id, auth.userId]
-    );
+    const task = await dependencies.database.pool.query<{
+      status: string;
+      current_revision: number;
+    }>("select status, current_revision from tasks where id = $1 and owner_user_id = $2", [
+      id,
+      auth.userId
+    ]);
     if (!task.rows[0]) throw new ApiError(404, "task_not_found");
     if (task.rows[0].status !== "active") throw new ApiError(409, "task_not_active");
     const dedupeKey = `manual:${id}:${randomUUID()}`;
     const created = await dependencies.database.pool.query<{ id: string }>(
-      `insert into collection_runs (task_id, trigger, status, dedupe_key)
-       values ($1, 'manual', 'queued', $2) returning id`,
-      [id, dedupeKey]
+      `insert into collection_runs (task_id, task_revision, trigger, status, dedupe_key)
+       values ($1, $2, 'manual', 'queued', $3) returning id`,
+      [id, task.rows[0].current_revision, dedupeKey]
     );
     const runId = created.rows[0]!.id;
     try {
@@ -308,9 +311,13 @@ export function registerTaskRoutes(
     if (!task.rows[0]) throw new ApiError(404, "task_not_found");
     const limit = Math.min(Number(context.req.query("limit") ?? 30) || 30, 100);
     const runs = await dependencies.database.pool.query(
-      `select id, trigger, status, attempt, fetched_count as "fetchedCount",
+      `select id, task_revision as "taskRevision", trigger, status, attempt,
+              fetched_count as "fetchedCount",
               new_count as "newCount", updated_count as "updatedCount",
               unchanged_count as "unchangedCount", rejected_count as "rejectedCount",
+              analysis_status as "analysisStatus", candidate_count as "candidateCount",
+              event_count as "eventCount", analysis_error_code as "analysisErrorCode",
+              analysis_error_message as "analysisErrorMessage",
               error_code as "errorCode", error_message as "errorMessage",
               scheduled_for as "scheduledFor", started_at as "startedAt",
               finished_at as "finishedAt", created_at as "createdAt"
@@ -324,8 +331,12 @@ export function registerTaskRoutes(
     const id = taskIdSchema.parse(context.req.param("id"));
     const runId = taskIdSchema.parse(context.req.param("runId"));
     const auth = context.get("auth");
-    const original = await dependencies.database.pool.query<{ status: string }>(
-      `select cr.status from collection_runs cr
+    const original = await dependencies.database.pool.query<{
+      status: string;
+      task_revision: number | null;
+      current_revision: number;
+    }>(
+      `select cr.status, cr.task_revision, t.current_revision from collection_runs cr
          join tasks t on t.id = cr.task_id
         where cr.id = $1 and cr.task_id = $2 and t.owner_user_id = $3 and t.status = 'active'`,
       [runId, id, auth.userId]
@@ -335,9 +346,13 @@ export function registerTaskRoutes(
       throw new ApiError(409, "run_not_retryable");
     }
     const created = await dependencies.database.pool.query<{ id: string }>(
-      `insert into collection_runs (task_id, trigger, status, dedupe_key)
-       values ($1, 'retry', 'queued', $2) returning id`,
-      [id, `retry:${runId}:${randomUUID()}`]
+      `insert into collection_runs (task_id, task_revision, trigger, status, dedupe_key)
+       values ($1, $2, 'retry', 'queued', $3) returning id`,
+      [
+        id,
+        original.rows[0].task_revision ?? original.rows[0].current_revision,
+        `retry:${runId}:${randomUUID()}`
+      ]
     );
     const retryRunId = created.rows[0]!.id;
     try {
@@ -358,10 +373,13 @@ export function registerTaskRoutes(
   app.post("/api/tasks/:id/ingest", async (context) => {
     const id = taskIdSchema.parse(context.req.param("id"));
     const auth = context.get("auth");
-    const task = await dependencies.database.pool.query<{ status: string }>(
-      "select status from tasks where id = $1 and owner_user_id = $2",
-      [id, auth.userId]
-    );
+    const task = await dependencies.database.pool.query<{
+      status: string;
+      current_revision: number;
+    }>("select status, current_revision from tasks where id = $1 and owner_user_id = $2", [
+      id,
+      auth.userId
+    ]);
     if (!task.rows[0]) throw new ApiError(404, "task_not_found");
     if (task.rows[0].status !== "active") throw new ApiError(409, "task_not_active");
     let raw: unknown;
@@ -373,9 +391,9 @@ export function registerTaskRoutes(
     const input = manualIngestRequestSchema.parse(raw);
     const created = await dependencies.database.pool.query<{ id: string }>(
       `insert into collection_runs
-        (task_id, trigger, status, dedupe_key, attempt, started_at)
-       values ($1, 'webhook', 'running', $2, 1, now()) returning id`,
-      [id, `webhook:${id}:${randomUUID()}`]
+        (task_id, task_revision, trigger, status, dedupe_key, attempt, started_at)
+       values ($1, $2, 'webhook', 'running', $3, 1, now()) returning id`,
+      [id, task.rows[0].current_revision, `webhook:${id}:${randomUUID()}`]
     );
     const runId = created.rows[0]!.id;
     try {
@@ -386,7 +404,17 @@ export function registerTaskRoutes(
         records: input.records
       });
       const stats = await completeIngestRun(dependencies.database.pool, runId);
-      return context.json({ id: runId, taskId: id, status: "succeeded", stats }, 201);
+      let analysisStatus = "queued";
+      try {
+        await dependencies.queueAnalysisRun({ runId, taskId: id });
+      } catch (error) {
+        console.error("Unable to queue analysis; scheduler will recover it", error);
+        analysisStatus = "pending";
+      }
+      return context.json(
+        { id: runId, taskId: id, status: "succeeded", analysisStatus, stats },
+        201
+      );
     } catch (error) {
       await markRunFailure(dependencies.database.pool, {
         runId,

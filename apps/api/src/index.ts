@@ -38,6 +38,25 @@ async function main(): Promise<void> {
         { jobKey: `collection:${runId}`, jobKeyMode: "unsafe_dedupe", maxAttempts: 5 }
       );
     },
+    queueAnalysisRun: async ({ runId, taskId }) => {
+      await database.pool.query(
+        "update collection_runs set analysis_status = 'queued' where id = $1 and task_id = $2",
+        [runId, taskId]
+      );
+      try {
+        await workerUtils.addJob(
+          "analyze_run",
+          { runId, taskId },
+          { jobKey: `analysis:${runId}`, jobKeyMode: "unsafe_dedupe", maxAttempts: 3 }
+        );
+      } catch (error) {
+        await database.pool.query(
+          "update collection_runs set analysis_status = 'pending' where id = $1",
+          [runId]
+        );
+        throw error;
+      }
+    },
     staticRoot: resolve("apps/web/dist")
   });
 
