@@ -1,6 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { createHash } from "node:crypto";
+import * as cheerio from "cheerio";
 import { XMLParser } from "fast-xml-parser";
 import { normalizedSourceRecordSchema, type NormalizedSourceRecord } from "@chitanda/contracts";
 
@@ -40,14 +41,18 @@ export class ConnectorError extends Error {
   }
 }
 
-type HttpConnectorOptions = {
+export type HttpConnectorOptions = {
   fetch?: typeof fetch;
   validateUrl?: (url: URL) => Promise<void>;
   maxResponseBytes?: number;
   timeoutMs?: number;
+  userAgent?: string;
+  headers?: Record<string, string>;
 };
 
 const defaultMaxResponseBytes = 5 * 1024 * 1024;
+const defaultUserAgent =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
 function isPrivateIpv4(address: string): boolean {
   const parts = address.split(".").map(Number);
@@ -176,8 +181,12 @@ async function fetchDocument(
   try {
     const headers = new Headers({
       accept:
-        "application/json, application/atom+xml, application/rss+xml, application/xml, text/xml;q=0.9",
-      "user-agent": "Chitanda/0.0 (+self-hosted information monitor)"
+        "text/html, application/json, application/atom+xml, application/rss+xml, application/xml, text/xml;q=0.9",
+      "accept-language": "en-SG,en;q=0.9",
+      "cache-control": "max-age=0",
+      "upgrade-insecure-requests": "1",
+      "user-agent": options.userAgent ?? defaultUserAgent,
+      ...options.headers
     });
     if (request.cursor.etag) headers.set("if-none-match", request.cursor.etag);
     if (request.cursor.lastModified) headers.set("if-modified-since", request.cursor.lastModified);
@@ -400,6 +409,183 @@ export class JsonApiConnector implements SourceConnector {
   }
 }
 
+function selector(query: ConnectorQuery, key: string, fallback: string): string {
+  const value = queryString(query, key, fallback).trim();
+  if (!value || value.length > 500) {
+    throw new ConnectorError("invalid_connector_config", `${key} must be a valid CSS selector`);
+  }
+  return value;
+}
+
+function normalizedWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+export class WebpageConnector implements SourceConnector {
+  readonly id = "webpage";
+  readonly mode = "pull";
+  constructor(private readonly options: HttpConnectorOptions = {}) {}
+
+  async collect(request: CollectRequest): Promise<CollectResult> {
+    const { body, cursor, finalUrl } = await fetchDocument(request, this.options);
+    if (body === null) return { records: [], cursor, notModified: true, rejectedCount: 0 };
+    const $ = cheerio.load(body);
+    const itemSelector = selector(request.query, "itemSelector", "article");
+    const titleSelector = selector(request.query, "titleSelector", "h1, h2, h3");
+    const linkSelector = selector(request.query, "linkSelector", "a[href]");
+    const contentSelector = queryString(request.query, "contentSelector", "").trim();
+    if (contentSelector.length > 500) {
+      throw new ConnectorError(
+        "invalid_connector_config",
+        "contentSelector must be a valid CSS selector"
+      );
+    }
+    const dateSelector = queryString(request.query, "dateSelector", "").trim();
+    const configuredLimit = Number(request.query.maxItems ?? 100);
+    const limit = Number.isInteger(configuredLimit)
+      ? Math.min(Math.max(configuredLimit, 1), 200)
+      : 100;
+    const elements = $(itemSelector).slice(0, limit).toArray();
+    const records: NormalizedSourceRecord[] = [];
+    let rejectedCount = 0;
+
+    for (const [index, element] of elements.entries()) {
+      const item = $(element);
+      const title =
+        normalizedWhitespace(item.find(titleSelector).first().text()) ||
+        normalizedWhitespace(item.text());
+      const href = item.attr("href") ?? item.find(linkSelector).first().attr("href");
+      const canonicalUrl = safeUrl(href, finalUrl);
+      const content = normalizedWhitespace(
+        contentSelector ? item.find(contentSelector).first().text() : item.text()
+      );
+      const publishedAt = dateSelector
+        ? isoDate(
+            item.find(dateSelector).first().attr("datetime") ??
+              item.find(dateSelector).first().text()
+          )
+        : null;
+      const externalId =
+        item.attr("data-id") ??
+        canonicalUrl ??
+        createHash("sha256")
+          .update(`${finalUrl.toString()}\0${title}\0${content}\0${index}`)
+          .digest("base64url");
+      const candidate = {
+        externalId,
+        canonicalUrl: canonicalUrl ?? finalUrl.toString(),
+        title: title || normalizedWhitespace($("title").first().text()) || "Untitled webpage item",
+        content,
+        author: null,
+        publishedAt,
+        language: $("html").attr("lang")?.trim() || null,
+        media: [],
+        metadata: { sourceType: "webpage" },
+        rawPayload: { title, content, href: href ?? null, publishedAt }
+      };
+      const parsed = normalizedSourceRecordSchema.safeParse(candidate);
+      if (parsed.success) records.push(parsed.data);
+      else rejectedCount += 1;
+    }
+
+    if (elements.length === 0) {
+      const title =
+        normalizedWhitespace($("meta[property='og:title']").attr("content") ?? "") ||
+        normalizedWhitespace($("title").text());
+      const main = $("main").first();
+      const content = normalizedWhitespace((main.length ? main : $("body")).text());
+      const canonicalUrl =
+        safeUrl($("link[rel='canonical']").attr("href"), finalUrl) ?? finalUrl.toString();
+      const parsed = normalizedSourceRecordSchema.safeParse({
+        externalId: canonicalUrl,
+        canonicalUrl,
+        title: title || canonicalUrl,
+        content,
+        author: null,
+        publishedAt: null,
+        language: $("html").attr("lang")?.trim() || null,
+        media: [],
+        metadata: { sourceType: "webpage" },
+        rawPayload: { title, content }
+      });
+      if (parsed.success) records.push(parsed.data);
+      else rejectedCount += 1;
+    }
+    return { records, cursor, notModified: false, rejectedCount };
+  }
+}
+
+export class SearchApiConnector implements SourceConnector {
+  readonly id = "search";
+  readonly mode = "pull";
+
+  constructor(
+    private readonly options: HttpConnectorOptions & { endpoint: string; apiKey?: string }
+  ) {}
+
+  async collect(request: CollectRequest): Promise<CollectResult> {
+    const query = queryString(request.query, "q", "").trim();
+    if (!query) throw new ConnectorError("invalid_connector_config", "Search query q is required");
+    if (!this.options.apiKey) {
+      throw new ConnectorError("search_not_configured", "Search API is not configured");
+    }
+    const url = new URL(this.options.endpoint);
+    url.searchParams.set("q", query);
+    url.searchParams.set("count", String(Math.min(Number(request.query.count ?? 20) || 20, 20)));
+    const { body, cursor } = await fetchDocument(
+      { ...request, query: { ...request.query, url: url.toString() } },
+      {
+        ...this.options,
+        headers: {
+          ...this.options.headers,
+          accept: "application/json",
+          "x-subscription-token": this.options.apiKey
+        }
+      }
+    );
+    if (body === null) return { records: [], cursor, notModified: true, rejectedCount: 0 };
+    let payload: unknown;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      throw new ConnectorError("invalid_json_response", "Search API did not return valid JSON");
+    }
+    const results = getPath(payload, "web.results");
+    if (!Array.isArray(results)) {
+      throw new ConnectorError(
+        "invalid_json_shape",
+        "Search API response has no web.results array"
+      );
+    }
+    const records: NormalizedSourceRecord[] = [];
+    let rejectedCount = 0;
+    for (const result of results) {
+      if (!result || typeof result !== "object") {
+        rejectedCount += 1;
+        continue;
+      }
+      const row = result as Record<string, unknown>;
+      const canonicalUrl = safeUrl(row.url, url);
+      const candidate = {
+        externalId: canonicalUrl,
+        canonicalUrl,
+        title: valueText(row.title) ?? canonicalUrl ?? "Untitled search result",
+        content: valueText(row.description) ?? "",
+        author: null,
+        publishedAt: isoDate(row.page_age),
+        language: valueText(row.language),
+        media: [],
+        metadata: { sourceType: "search", query },
+        rawPayload: row
+      };
+      const parsed = normalizedSourceRecordSchema.safeParse(candidate);
+      if (parsed.success) records.push(parsed.data);
+      else rejectedCount += 1;
+    }
+    return { records, cursor, notModified: false, rejectedCount };
+  }
+}
+
 export class ManualConnector implements SourceConnector {
   readonly id = "manual";
   readonly mode = "push";
@@ -416,13 +602,33 @@ export class WebhookConnector implements SourceConnector {
   }
 }
 
-export function createBuiltinConnectors(): Map<string, SourceConnector> {
+export type BuiltinConnectorOptions = {
+  userAgent?: string;
+  search?: { endpoint: string; apiKey?: string };
+};
+
+export function createBuiltinConnectors(
+  options: BuiltinConnectorOptions = {}
+): Map<string, SourceConnector> {
+  const httpOptions: HttpConnectorOptions = {
+    ...(options.userAgent ? { userAgent: options.userAgent } : {})
+  };
   const connectors: SourceConnector[] = [
-    new RssConnector(),
-    new JsonApiConnector(),
+    new RssConnector(httpOptions),
+    new JsonApiConnector(httpOptions),
+    new WebpageConnector(httpOptions),
     new ManualConnector(),
     new WebhookConnector()
   ];
+  if (options.search) {
+    connectors.push(
+      new SearchApiConnector({
+        ...httpOptions,
+        endpoint: options.search.endpoint,
+        ...(options.search.apiKey ? { apiKey: options.search.apiKey } : {})
+      })
+    );
+  }
   return new Map(connectors.map((connector) => [connector.id, connector]));
 }
 

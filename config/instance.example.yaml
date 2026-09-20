@@ -12,7 +12,18 @@ security:
   secureCookies: true
   requireAdminMfa: true
 
+acquisition:
+  userAgent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36
+  search:
+    enabled: true
+    apiKeyFile: /run/secrets/brave-search-api-key
+
 notifications:
+  digestTime: "18:00"
+  quietHours:
+    enabled: true
+    start: "22:00"
+    end: "08:00"
   email:
     enabled: true
     from: Chitanda <chitanda@example.com>

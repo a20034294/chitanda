@@ -297,6 +297,44 @@ export const events = pgTable(
   ]
 );
 
+export const deliveries = pgTable(
+  "deliveries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    channel: text("channel").notNull(),
+    mode: text("mode").notNull(),
+    scheduleBucket: text("schedule_bucket").notNull(),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    recipient: text("recipient").notNull(),
+    status: text("status").notNull().default("queued"),
+    attempt: integer("attempt").notNull().default(0),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    providerMessageId: text("provider_message_id"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("deliveries_event_channel_bucket_idx").on(
+      table.eventId,
+      table.userId,
+      table.channel,
+      table.scheduleBucket
+    ),
+    index("deliveries_status_scheduled_for_idx").on(table.status, table.scheduledFor),
+    index("deliveries_user_id_idx").on(table.userId)
+  ]
+);
+
 export const userFeedback = pgTable(
   "user_feedback",
   {

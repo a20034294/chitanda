@@ -1,11 +1,17 @@
 import { createServer } from "node:http";
 import { analyzeCollectionRun, markAnalysisFailure } from "@chitanda/analysis";
-import { loadConfig, formatConfigError } from "@chitanda/config";
+import { loadConfig, formatConfigError, readSecretFile } from "@chitanda/config";
 import { taskDefinitionV1Schema, type ServiceStatus } from "@chitanda/contracts";
 import { createDatabase } from "@chitanda/db";
 import { createLlmProviders } from "@chitanda/llm";
 import { collectTaskRun, isScheduleDue, markRunFailure } from "@chitanda/collection";
 import { createBuiltinConnectors } from "@chitanda/connectors";
+import {
+  createPendingEmailDeliveries,
+  createSmtpEmailProvider,
+  deliverEmail,
+  dueEmailDeliveryIds
+} from "@chitanda/notifications";
 import { run, type Runner, type TaskList } from "graphile-worker";
 import pino from "pino";
 
@@ -24,8 +30,25 @@ async function main(): Promise<void> {
       logger.error({ error }, "Unexpected PostgreSQL client error");
     });
   });
-  const connectors = createBuiltinConnectors();
+  const searchApiKey =
+    config.acquisition.search.enabled && config.acquisition.search.apiKeyFile
+      ? await readSecretFile(config.acquisition.search.apiKeyFile)
+      : undefined;
+  const connectors = createBuiltinConnectors({
+    userAgent: config.acquisition.userAgent,
+    ...(config.acquisition.search.enabled
+      ? {
+          search: {
+            endpoint: config.acquisition.search.endpoint,
+            ...(searchApiKey ? { apiKey: searchApiKey } : {})
+          }
+        }
+      : {})
+  });
   const providers = createLlmProviders(config);
+  const emailProvider = config.notifications.email.enabled
+    ? await createSmtpEmailProvider(config)
+    : null;
   let runner: Runner | null = null;
 
   const healthServer = createServer((request, response) => {
@@ -185,6 +208,11 @@ async function main(): Promise<void> {
       const { runId, taskId } = payload as { runId: string; taskId: string };
       try {
         const stats = await analyzeCollectionRun(database.pool, providers, { runId, taskId });
+        await helpers.addJob(
+          "schedule_deliveries",
+          {},
+          { jobKey: `deliveries:${runId}`, jobKeyMode: "unsafe_dedupe", maxAttempts: 3 }
+        );
         helpers.logger.info(`Analysis run ${runId} completed: ${JSON.stringify(stats)}`);
       } catch (error) {
         await markAnalysisFailure(database.pool, {
@@ -217,6 +245,44 @@ async function main(): Promise<void> {
         );
       }
     },
+    schedule_deliveries: async (_payload, helpers) => {
+      if (!emailProvider) return;
+      const created = await createPendingEmailDeliveries(database.pool, config);
+      const dueIds = await dueEmailDeliveryIds(database.pool);
+      for (const deliveryId of dueIds) {
+        await helpers.addJob(
+          "send_email_delivery",
+          { deliveryId },
+          {
+            jobKey: `email-delivery:${deliveryId}`,
+            jobKeyMode: "unsafe_dedupe",
+            maxAttempts: 5
+          }
+        );
+      }
+      if (created > 0 || dueIds.length > 0) {
+        helpers.logger.info(`Email deliveries: ${created} created, ${dueIds.length} due`);
+      }
+    },
+    send_email_delivery: async (payload, helpers) => {
+      if (!emailProvider) throw new Error("Email provider is disabled");
+      if (
+        !payload ||
+        typeof payload !== "object" ||
+        typeof (payload as Record<string, unknown>).deliveryId !== "string"
+      ) {
+        throw new Error("Invalid send_email_delivery payload");
+      }
+      const deliveryId = (payload as { deliveryId: string }).deliveryId;
+      const status = await deliverEmail(database.pool, emailProvider, {
+        deliveryId,
+        attempt: helpers.job.attempts,
+        maxAttempts: helpers.job.max_attempts,
+        publicBaseUrl: config.server.publicBaseUrl
+      });
+      if (status === "retrying") throw new Error(`Email delivery ${deliveryId} will retry`);
+      helpers.logger.info(`Email delivery ${deliveryId}: ${status}`);
+    },
     heartbeat: async (_payload, helpers) => {
       helpers.logger.info("Worker heartbeat job completed");
     }
@@ -226,12 +292,14 @@ async function main(): Promise<void> {
     connectionString: config.database.url,
     concurrency: config.worker.concurrency,
     pollInterval: config.worker.pollIntervalMs,
-    crontab: "* * * * * schedule_due_tasks\n* * * * * schedule_analysis",
+    crontab:
+      "* * * * * schedule_due_tasks\n* * * * * schedule_analysis\n* * * * * schedule_deliveries",
     noHandleSignals: true,
     taskList
   });
   await runner.addJob("schedule_due_tasks", {}, { jobKey: "schedule-startup", maxAttempts: 3 });
   await runner.addJob("schedule_analysis", {}, { jobKey: "analysis-startup", maxAttempts: 3 });
+  await runner.addJob("schedule_deliveries", {}, { jobKey: "deliveries-startup", maxAttempts: 3 });
   logger.info({ concurrency: config.worker.concurrency }, "Job worker started");
 
   let shuttingDown = false;

@@ -18,6 +18,7 @@
     "@chitanda/contracts": "workspace:*",
     "@chitanda/db": "workspace:*",
     "@chitanda/llm": "workspace:*",
+    "@chitanda/notifications": "workspace:*",
     "@chitanda/security": "workspace:*",
     "@hono/node-server": "^2.1.1",
     "graphile-worker": "^0.18.0",

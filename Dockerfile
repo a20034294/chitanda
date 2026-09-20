@@ -16,6 +16,7 @@ COPY packages/connectors/package.json packages/connectors/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/llm/package.json packages/llm/package.json
+COPY packages/notifications/package.json packages/notifications/package.json
 COPY packages/security/package.json packages/security/package.json
 RUN pnpm install --frozen-lockfile
 

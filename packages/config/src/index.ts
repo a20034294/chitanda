@@ -67,7 +67,21 @@ const configSchema = z
         store: z.boolean()
       })
     }),
+    acquisition: z.object({
+      userAgent: z.string().trim().min(10).max(500),
+      search: z.object({
+        enabled: z.boolean(),
+        endpoint: urlSchema,
+        apiKeyFile: z.string().min(1).optional()
+      })
+    }),
     notifications: z.object({
+      digestTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+      quietHours: z.object({
+        enabled: z.boolean(),
+        start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+        end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      }),
       email: z.object({
         enabled: z.boolean(),
         from: z.string().min(1),

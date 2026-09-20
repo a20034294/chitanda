@@ -18,6 +18,7 @@
     "@chitanda/contracts": "workspace:*",
     "@chitanda/db": "workspace:*",
     "@chitanda/llm": "workspace:*",
+    "@chitanda/notifications": "workspace:*",
     "graphile-worker": "^0.18.0",
     "pino": "^10.3.1"
   }

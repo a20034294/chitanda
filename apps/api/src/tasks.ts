@@ -34,11 +34,95 @@ export function registerTaskRoutes(
       connectors: [
         { id: "rss", name: "RSS / Atom", mode: "pull" },
         { id: "json_api", name: "Generic JSON API", mode: "pull" },
+        {
+          id: "search",
+          name: "Brave Search API",
+          mode: "pull",
+          enabled: dependencies.config.acquisition.search.enabled
+        },
+        { id: "webpage", name: "Static webpage", mode: "pull", enabled: true },
         { id: "manual", name: "Manual ingest", mode: "push" },
         { id: "webhook", name: "Authenticated webhook ingest", mode: "push" }
       ]
     })
   );
+
+  app.get("/api/tasks/templates/singapore-concerts", (context) => {
+    const requestedProvider =
+      context.req.query("provider") ?? dependencies.config.llm.defaultProvider;
+    if (requestedProvider !== "ollama" && requestedProvider !== "openai") {
+      throw new ApiError(400, "unsupported_llm_provider");
+    }
+    const definition = taskDefinitionV1Schema.parse({
+      schemaVersion: 1,
+      name: "新加坡演唱會",
+      intent: "持續追蹤新加坡新公布的演唱會與售票資訊，發現新場次時通知我。",
+      locale: "zh-TW",
+      timezone: "Asia/Singapore",
+      topics: ["concert", "live music", "ticket sales", "Singapore"],
+      entities: [
+        {
+          type: "location",
+          value: "Singapore",
+          aliases: ["新加坡", "SG"]
+        }
+      ],
+      sources: [
+        {
+          connectorId: "webpage",
+          query: {
+            url: "https://www.livenation.sg/",
+            itemSelector: "a[href^='/event/']:not([href='/event/allevents'])",
+            titleSelector: "h2, h3, h4",
+            linkSelector: "a[href]",
+            maxItems: 100
+          }
+        }
+      ],
+      filters: { all: [], any: [], none: [] },
+      monitor: {
+        schedule: { type: "interval", value: "PT6H" },
+        eventTypes: ["new_item", "content_changed", "field_changed"],
+        lookback: "P1Y"
+      },
+      analysis: {
+        semanticMatch: true,
+        minimumScore: 0.6,
+        extractionFields: [
+          "artist",
+          "eventDate",
+          "venue",
+          "ticketPrice",
+          "currency",
+          "ticketStatus"
+        ]
+      },
+      delivery: [
+        { channel: "in_app", mode: "store_only", minimumSeverity: "normal" },
+        { channel: "email", mode: "immediate", minimumSeverity: "normal" }
+      ]
+    });
+    const preview: TaskPreview = {
+      interpreted: {
+        definition,
+        summary:
+          "每六小時檢查 Live Nation Singapore，發現新的新加坡演唱會時保存至 Inbox 並寄送 Email。",
+        clarificationQuestions: [],
+        warnings: dependencies.config.notifications.email.enabled
+          ? ["靜態網頁版面變更時可能需要更新 CSS selector。"]
+          : [
+              "Email 目前未啟用；事件仍會保存在 Inbox。",
+              "靜態網頁版面變更時可能需要更新 CSS selector。"
+            ],
+        confidence: 0.9
+      },
+      originalRequest: "追蹤新加坡演唱會；公布新場次時透過 Email 通知我。",
+      provider: requestedProvider,
+      model: defaultModel(dependencies, requestedProvider),
+      promptVersion: "reference-template-sg-concert-v1"
+    };
+    return context.json(preview);
+  });
 
   app.post("/api/tasks/interpret", async (context) => {
     let raw: unknown;

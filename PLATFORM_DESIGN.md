@@ -1,7 +1,7 @@
 # Chitanda 平台設計定義
 
-> 狀態：Draft v0.5（Phase 3 implemented）<br>
-> 日期：2026-09-19<br>
+> 狀態：Draft v0.6（Phase 4 implemented）<br>
+> 日期：2026-09-20<br>
 > 目標讀者：產品維護者、開發者、來源 connector 開發者
 > 技術基線：Node.js 24 LTS、TypeScript、Hono、Preact + Vite、PostgreSQL
 
@@ -29,7 +29,7 @@ Chitanda 是一套適合個人、家庭或少數朋友自架的 LLM-based 資訊
 | 網路邊界                | 服務會暴露於公開網路；TLS 與反向代理由外部基礎設施負責，不屬於 Chitanda 部署範圍 |
 | 設定管理                | 程式預設值 + 單一 YAML 設定檔；環境變數只保留部署差異與 secret 注入              |
 | Dependency              | 新增時採當下 latest stable，提交 lockfile 固定可重現版本                         |
-| 首個 reference template | 演唱會資訊                                                                       |
+| 首個 reference template | 新加坡演唱會資訊                                                                 |
 | 主要通知                | Email（SMTP）；站內 Inbox 同時保留                                               |
 | 時區                    | instance 有預設時區，使用者可覆寫；排程以 IANA timezone 儲存                     |
 
@@ -61,7 +61,7 @@ Chitanda 是一套適合個人、家庭或少數朋友自架的 LLM-based 資訊
 
 1. 使用者輸入自然語言，例如：
 
-   > 每兩小時幫我找台北或新北、票價低於 3,000 元的日本樂團演唱會；有新場次就寄 Email 通知我，每天晚上再寄一份摘要。
+   > 每六小時幫我找新加坡新公布的演唱會；有新場次就寄 Email 通知我。
 
 2. Intent Parser 將文字解析為 `TaskDefinition` 草稿。
 3. UI 顯示可讀摘要、結構化條件、預計使用的來源、頻率與通知方式。
@@ -579,6 +579,11 @@ Chitanda Compose 定義 `api`、`worker`、`postgres` 與選用的 `ollama`；AP
 
 完成條件：同一事件不因 retry 重複通知；reference template 可由新使用者在 UI 建立並成功執行。
 
+實作註記：首個範本使用 Live Nation Singapore 的公開靜態 HTML，時區為
+`Asia/Singapore`。所有 HTTP connectors 使用可由 YAML 覆寫的瀏覽器相容 `User-Agent` 與常見
+request headers；API key 與 SMTP credential 僅接受 secret file。Email delivery 以資料庫唯一鍵、
+固定 Message-ID 與 worker job key 共同去重，digest 依使用者與當地日期合併。
+
 ### Phase 5 — 自架強化與 plugin 開發體驗
 
 - 強化 secret rotation、SSRF controls 與安全稽核工具。
@@ -626,4 +631,4 @@ MVP 定義為 Phase 0–4，需同時符合：
 5. 外部 connector plugin 採 container protocol 或獨立 process protocol。
 6. Kubernetes Helm chart 的交付時點，以及正式環境 PostgreSQL/object storage 的支援範圍。
 
-第一個 reference template 已確定為「演唱會資訊」，用來驗證地區、日期、票價、藝人別名、重複場次與新增事件。
+第一個 reference template 已確定為「新加坡演唱會資訊」，用來驗證地區、日期、票價、藝人別名、重複場次與新增事件。

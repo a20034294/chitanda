@@ -40,7 +40,15 @@ llm:
     apiKeyFile: .secrets/openai-api-key
     model: gpt-5.6-terra
     store: false
+acquisition:
+  userAgent: Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36
+  search:
+    enabled: false
+    endpoint: https://api.search.brave.com/res/v1/web/search
+    apiKeyFile: .secrets/brave-search-api-key
 notifications:
+  digestTime: "18:00"
+  quietHours: { enabled: true, start: "22:00", end: "08:00" }
   email:
     enabled: false
     from: Chitanda <chitanda@localhost>

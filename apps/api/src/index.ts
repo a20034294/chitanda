@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { loadConfig, formatConfigError } from "@chitanda/config";
 import { createDatabase } from "@chitanda/db";
 import { createLlmProviders } from "@chitanda/llm";
+import { createSmtpEmailProvider } from "@chitanda/notifications";
 import { makeWorkerUtils } from "graphile-worker";
 import pino from "pino";
 import { createApp } from "./app.js";
@@ -23,6 +24,9 @@ async function main(): Promise<void> {
     });
   });
   const providers = createLlmProviders(config);
+  const emailProvider = config.notifications.email.enabled
+    ? await createSmtpEmailProvider(config)
+    : undefined;
   const workerUtils = await makeWorkerUtils({ pgPool: database.pool });
   await workerUtils.migrate();
   const app = createApp({
@@ -57,6 +61,7 @@ async function main(): Promise<void> {
         throw error;
       }
     },
+    ...(emailProvider ? { emailProvider } : {}),
     staticRoot: resolve("apps/web/dist")
   });
 

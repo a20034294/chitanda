@@ -106,3 +106,23 @@ The worker creates idempotent `new_item`, `content_changed`, `field_changed`,
 `threshold_crossed`, and `back_in_stock` events according to each task definition. The Runs panel
 shows collection and analysis states separately, while the Inbox provides source links and short
 evidence excerpts.
+
+## Phase 4 notifications and web sources
+
+- `webpage` extracts static HTML with configurable `itemSelector`, `titleSelector`,
+  `linkSelector`, `contentSelector`, `dateSelector`, and `maxItems` fields.
+- `search` uses the Brave Search API when `acquisition.search.enabled` is true and its API key file
+  is configured.
+- Every outbound HTTP request sends a configurable browser-like `acquisition.userAgent` plus common
+  browser compatibility headers. Chitanda still enforces its SSRF, redirect, timeout, and
+  response-size policies.
+- SMTP supports immediate mail, daily digest grouping, quiet-hours deferral, database-backed retry,
+  and deterministic message IDs. SMTP usernames, passwords, and search keys are read from secret
+  files and must not be committed.
+- The UI includes a deterministic Singapore concert template backed by the public Live Nation
+  Singapore page. It runs every six hours, stores events in Inbox, and requests immediate Email.
+
+Copy the relevant sections from `config/instance.example.yaml`, create the referenced files under
+`.secrets/` (or mount Docker/Kubernetes secrets at `/run/secrets`), and enable Email or search only
+after those files exist. Use **測試 Email** in the header to verify SMTP delivery to the signed-in
+account. Static-page selectors are expected to require maintenance when a source changes its HTML.

@@ -90,6 +90,12 @@ type EventDetail = InboxEvent & {
   feedbackNote: string | null;
 };
 
+type NotificationSettings = {
+  email: { enabled: boolean; from: string };
+  digestTime: string;
+  quietHours: { enabled: boolean; start: string; end: string };
+};
+
 function cookie(name: string): string | undefined {
   return document.cookie
     .split("; ")
@@ -288,7 +294,7 @@ function MfaSetup({ user, onComplete }: { user: User; onComplete: () => void }) 
 
 function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [request, setRequest] = useState(
-    "追蹤台北與新北未來六個月的演唱會，公布新場次時通知我，票價低於 3000 元優先。"
+    "追蹤新加坡未來六個月的演唱會，公布新場次時透過 Email 通知我。"
   );
   const [provider, setProvider] = useState("ollama");
   const [preview, setPreview] = useState<Preview>();
@@ -300,6 +306,7 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [openRuns, setOpenRuns] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>();
 
   async function loadTasks(): Promise<void> {
     const result = await api<{ tasks: Task[] }>("/api/tasks");
@@ -318,7 +325,40 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
     void loadEvents().catch((error: unknown) =>
       setMessage(error instanceof Error ? error.message : "載入 Inbox 失敗")
     );
+    void api<NotificationSettings>("/api/settings/notifications")
+      .then(setNotificationSettings)
+      .catch(() => undefined);
   }, []);
+
+  async function loadSingaporeConcertTemplate(): Promise<void> {
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await api<Preview>(
+        `/api/tasks/templates/singapore-concerts?provider=${encodeURIComponent(provider)}`
+      );
+      setRequest(result.originalRequest);
+      setPreview(result);
+      setDefinitionText(JSON.stringify(result.interpreted.definition, null, 2));
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "無法載入範本");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendTestEmail(): Promise<void> {
+    setBusy(true);
+    setMessage("");
+    try {
+      await api("/api/settings/notifications/email/test", { method: "POST" });
+      setMessage(`測試信已寄到 ${user.email}。`);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "測試信寄送失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function openEvent(id: string): Promise<void> {
     try {
@@ -369,7 +409,7 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
     try {
       const result = await api<Preview>("/api/tasks/interpret", {
         method: "POST",
-        body: JSON.stringify({ request, provider, locale: "zh-TW", timezone: "Asia/Taipei" })
+        body: JSON.stringify({ request, provider, locale: "zh-TW", timezone: "Asia/Singapore" })
       });
       setPreview(result);
       setDefinitionText(JSON.stringify(result.interpreted.definition, null, 2));
@@ -464,10 +504,15 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
       <header class="topbar">
         <div>
           <span class="brand">Chitanda</span>
-          <span class="phase">Phase 3</span>
+          <span class="phase">Phase 4</span>
         </div>
         <div class="account">
           <span>{user.displayName}</span>
+          {notificationSettings?.email.enabled && (
+            <button class="ghost" disabled={busy} onClick={() => void sendTestEmail()}>
+              測試 Email
+            </button>
+          )}
           <button class="ghost" onClick={onLogout}>
             登出
           </button>
@@ -493,6 +538,14 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
                   <option value="openai">OpenAI GPT</option>
                 </select>
               </label>
+              <button
+                type="button"
+                class="secondary"
+                disabled={busy}
+                onClick={() => void loadSingaporeConcertTemplate()}
+              >
+                使用新加坡演唱會範本
+              </button>
               <button disabled={busy}>{busy ? "解析中…" : "產生預覽"}</button>
             </div>
           </form>

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { assertPublicHttpUrl, JsonApiConnector, RssConnector } from "../src/index.js";
+import {
+  assertPublicHttpUrl,
+  JsonApiConnector,
+  RssConnector,
+  SearchApiConnector,
+  WebpageConnector
+} from "../src/index.js";
 
 const noCursor = { data: {} };
 const allowTestUrl = async (): Promise<void> => undefined;
@@ -75,6 +81,76 @@ describe("JSON API connector", () => {
 
     expect(result.records[0]).toMatchObject({ externalId: "1", title: "Concert" });
     expect(result.rejectedCount).toBe(1);
+  });
+});
+
+describe("webpage connector", () => {
+  it("extracts repeated static event links and sends the configured User-Agent", async () => {
+    let headers: Headers | undefined;
+    const connector = new WebpageConnector({
+      userAgent: "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36",
+      validateUrl: allowTestUrl,
+      fetch: async (_input, init) => {
+        headers = new Headers(init?.headers);
+        return new Response(`<!doctype html><html lang="en-SG"><head><title>Events</title></head>
+          <body><a class="event" href="/event/band"><h2>Band Live in Singapore</h2>
+          <span class="details">12 Dec · National Stadium</span></a></body></html>`);
+      }
+    });
+    const result = await connector.collect({
+      query: {
+        url: "https://concerts.example/",
+        itemSelector: "a.event",
+        titleSelector: "h2",
+        contentSelector: ".details"
+      },
+      cursor: noCursor
+    });
+
+    expect(headers?.get("user-agent")).toBe("Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36");
+    expect(headers?.get("accept-language")).toBe("en-SG,en;q=0.9");
+    expect(result.records[0]).toMatchObject({
+      externalId: "https://concerts.example/event/band",
+      canonicalUrl: "https://concerts.example/event/band",
+      title: "Band Live in Singapore",
+      content: "12 Dec · National Stadium",
+      language: "en-SG"
+    });
+  });
+});
+
+describe("search API connector", () => {
+  it("maps Brave web results without exposing the API key in the query", async () => {
+    let requestedUrl = "";
+    let headers: Headers | undefined;
+    const connector = new SearchApiConnector({
+      endpoint: "https://api.search.example/web/search",
+      apiKey: "test-secret",
+      validateUrl: allowTestUrl,
+      fetch: async (input, init) => {
+        requestedUrl = String(input);
+        headers = new Headers(init?.headers);
+        return new Response(
+          JSON.stringify({
+            web: {
+              results: [
+                {
+                  url: "https://events.example/show",
+                  title: "Singapore Concert",
+                  description: "Tickets on sale"
+                }
+              ]
+            }
+          })
+        );
+      }
+    });
+    const result = await connector.collect({ query: { q: "Singapore concert" }, cursor: noCursor });
+
+    expect(requestedUrl).toContain("q=Singapore+concert");
+    expect(requestedUrl).not.toContain("test-secret");
+    expect(headers?.get("x-subscription-token")).toBe("test-secret");
+    expect(result.records[0]?.title).toBe("Singapore Concert");
   });
 });
 

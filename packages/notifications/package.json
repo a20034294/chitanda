@@ -1,5 +1,5 @@
 {
-  "name": "@chitanda/connectors",
+  "name": "@chitanda/notifications",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -15,11 +15,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@chitanda/config": "workspace:*",
     "@chitanda/contracts": "workspace:*",
-    "cheerio": "^1.2.0",
-    "fast-xml-parser": "^5.11.1"
+    "nodemailer": "^10.0.10",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
-    "@types/node": "^24.13.5"
+    "@types/node": "^24.13.5",
+    "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.23.1"
   }
 }

@@ -1,6 +1,7 @@
 import type { AppConfig } from "@chitanda/config";
 import type { Database } from "@chitanda/db";
 import type { LlmProvider } from "@chitanda/llm";
+import type { EmailProvider } from "@chitanda/notifications";
 
 export type AuthenticatedSession = {
   sessionId: string;
@@ -24,6 +25,7 @@ export type ApiDependencies = {
   providers: Map<string, LlmProvider>;
   queueCollectionRun: (input: { runId: string; taskId: string }) => Promise<void>;
   queueAnalysisRun: (input: { runId: string; taskId: string }) => Promise<void>;
+  emailProvider?: EmailProvider;
 };
 
 export class ApiError extends Error {
